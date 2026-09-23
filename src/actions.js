@@ -3,7 +3,7 @@
     const NS = window.__BSKY;
     if (!NS) return;
 
-    // ═══ Session Management ═══
+    /* ════════════════ Session Management ════════════════ */
     NS.getSession = async function () {
         const pass = NS.getDecryptedPass();
         if (!pass) throw new Error('لا توجد كلمة مرور');
@@ -56,6 +56,7 @@
         return j.blob;
     };
 
+    /* ════════════════ Publish ════════════════ */
     NS.publishScheduledPost = async function (post) {
         const pass = NS.getDecryptedPass();
         if (!pass) { NS.pushLog('post-fail', '❌ لا توجد كلمة مرور'); return false; }
@@ -139,7 +140,7 @@
         });
     };
 
-    // ═══ Follow Back ═══
+    /* ════════════════ Follow Back ════════════════ */
     NS.doFollowBack = async function (myGen) {
         if (!location.pathname.includes('/notifications')) return 0;
         if (!NS.dailyCheck('followBacks')) return 0;
@@ -169,7 +170,7 @@
         return count;
     };
 
-    // ═══ Like Commenters ═══
+    /* ════════════════ Like Commenters ════════════════ */
     NS.doLikeCommenters = async function (myGen) {
         const onN = location.pathname.includes('/notifications');
         const onP = /\/profile\/[^/]+/.test(location.pathname);
@@ -200,7 +201,7 @@
         return count;
     };
 
-    // ═══ Auto Like ═══
+    /* ════════════════ Auto Like ════════════════ */
     NS.doAutoLike = async function (myGen) {
         if (Math.random() * 100 > NS.state.likeRatio) return 0;
         if (!NS.dailyCheck('likes')) return 0;
@@ -229,7 +230,7 @@
         return count;
     };
 
-    // ═══ Auto Follow ═══
+    /* ════════════════ Auto Follow ════════════════ */
     NS.doAutoFollow = async function (myGen) {
         if (Math.random() * 100 > NS.state.followRatio) return 0;
         if (!NS.dailyCheck('follows')) return 0;
@@ -259,7 +260,7 @@
         return count;
     };
 
-    // ═══ Auto Repost ═══
+    /* ════════════════ Auto Repost ════════════════ */
     NS.doAutoRepost = async function (myGen) {
         if (!NS.state.autoRepost) return 0;
         if (!NS.dailyCheck('reposts')) return 0;
@@ -288,7 +289,7 @@
         return count;
     };
 
-    // ═══ Wait Confirm Modal ═══
+    /* ════════════════ Wait Confirm Modal ════════════════ */
     NS.waitForConfirmModal = async function (maxWaitMs = 5000, myGen) {
         const start = Date.now();
         while (Date.now() - start < maxWaitMs) {
@@ -305,41 +306,74 @@
         return null;
     };
 
-    // ═══ Cleanup Non-Followers ═══
+    /* ════════════════ ✅ Cleanup Non-Followers (إصلاح /follows) ════════════════ */
     NS.doCleanupNonFollowers = async function (myGen) {
-        if (!/\/profile\/[^/]+\/following/.test(location.pathname)) return 0;
-        if (!NS.state.autoUnfollow) return 0;
-        if (NS.state.knownFollowers.length === 0) {
-            NS.pushLog('cleanup', '⚠️ زُر /followers أولاً');
+        // ✅ الإصلاح: Bluesky يستخدم /follows وليس /following
+        if (!/\/profile\/[^/]+\/(follows|following)/.test(location.pathname)) {
             return 0;
         }
+        if (!NS.state.autoUnfollow) return 0;
+        if (NS.state.knownFollowers.length === 0) {
+            NS.pushLog('cleanup', '⚠️ زُر /followers أولاً لجمع قائمة المتابعين');
+            return 0;
+        }
+
         const followers = new Set(NS.state.knownFollowers);
+        NS.pushLog('cleanup', `🔍 فحص ${followers.size} متابع...`);
+
+        // جمع كل أزرار "متابَع"
         const btns = Array.from(document.querySelectorAll('button, [role="button"]'))
             .filter(b => !NS.isInsidePanel(b) && NS.isAlreadyFollowing(b));
+
+        NS.pushLog('cleanup', `📋 وجدت ${btns.length} زر متابعة في الصفحة`);
+
         let n = 0;
         for (const btn of btns) {
             if (myGen !== NS.loopGeneration) return n;
-            if (!NS.rateCheck()) break;
+            if (!NS.rateCheck()) {
+                NS.pushLog('cleanup', '⏸️ تم الوصول لحد المعدل');
+                break;
+            }
             const c = btn.closest('[role="article"]') || btn.closest('div');
             const h = NS.getHandleFromContainer(c);
-            if (!h || followers.has(h)) continue;
-            if (NS.state.processedFollows.includes(h)) continue;
-            if (NS.state.dryRun) { NS.pushLog('dry', `إلغاء: ${h}`); continue; }
+            if (!h) continue;
+
+            // ✅ إذا كان الحساب يتابعك → تجاهله
+            if (followers.has(h)) {
+                NS.pushLog('cleanup-skip', `✅ ${h} يتابعك - تخطّي`);
+                continue;
+            }
+            // ✅ إذا كنا قد ألغينا متابعته سابقاً → تجاهله
+            if (NS.state.unfollowedUsers.includes(h)) continue;
+
+            if (NS.state.dryRun) {
+                NS.pushLog('dry', `إلغاء تجربة: ${h}`);
+                continue;
+            }
+
+            // إلغاء المتابعة
             NS.fire(btn);
             const confirm = await NS.waitForConfirmModal(5000, myGen);
             if (confirm) {
                 NS.rateRecord(); NS.fire(confirm);
                 NS.bumpStat('unfollows');
                 NS.state.unfollowedUsers.push(h);
-                NS.pushLog('cleanup-unfollow', `🧹 ${h}`);
+                NS.pushLog('cleanup-unfollow', `🧹 ألغيت: ${h}`);
                 n++;
+            } else {
+                NS.pushLog('cleanup-fail', `⚠️ لم يظهر تأكيد لـ ${h}`);
             }
             if (!await NS.sleepGen(NS.rand(2500, 4500), myGen)) return n;
+        }
+
+        if (n) {
+            NS.saveSettings();
+            NS.pushLog('cleanup', `✅ ألغيت متابعة ${n} حساب`);
         }
         return n;
     };
 
-    // ═══ Reply to Notifications ═══
+    /* ════════════════ Reply to Notifications ════════════════ */
     NS.doReplyToNotifications = async function (myGen) {
         if (!location.pathname.includes('/notifications')) return 0;
         if (!NS.dailyCheck('notifReplies')) return 0;
@@ -402,7 +436,7 @@
         return count;
     };
 
-    // ═══ Reply to Messages ═══
+    /* ════════════════ Reply to Messages ════════════════ */
     NS.doReplyToMessages = async function (myGen) {
         if (!location.pathname.includes('/messages')) return 0;
         if (!NS.dailyCheck('messages')) return 0;
@@ -449,7 +483,7 @@
         return count;
     };
 
-    // ═══ Auto Reply ═══
+    /* ════════════════ Auto Reply ════════════════ */
     NS.doAutoReply = async function (myGen) {
         const btns = Array.from(document.querySelectorAll('[data-testid="replyBtn"], [data-testid*="reply" i]'))
             .filter(b => !NS.isInsidePanel(b));
@@ -492,7 +526,7 @@
         return 0;
     };
 
-    // ═══ Follow Engagers ═══
+    /* ════════════════ Follow Engagers ════════════════ */
     NS.doFollowEngagers = async function (myGen) {
         if (!NS.state.followEngagers || !NS.dailyCheck('engagerFollows')) return 0;
         if (NS.state.engagerQueue.length === 0) return 0;
@@ -540,22 +574,38 @@
         NS.saveSettings();
     };
 
+    /* ════════════════ ✅ Track Followers (إصلاح) ════════════════ */
     NS.trackCurrentFollowers = function () {
-        if (!NS.state.trackUnfollowers || !location.pathname.includes('/followers')) return;
+        if (!NS.state.trackUnfollowers) return;
+        // ✅ الإصلاح: استخدام /followers فقط
+        if (!location.pathname.includes('/followers')) return;
+        
         const handles = new Set();
         document.querySelectorAll('a[href^="/profile/"]').forEach(a => {
             if (NS.isInsidePanel(a)) return;
             const h = a.getAttribute('href').replace('/profile/','').split('/')[0];
-            if (h && h !== NS.state.myHandle) handles.add(h);
+            if (h && h !== NS.state.myHandle && !h.includes('?')) handles.add(h);
         });
+        
         if (handles.size === 0) return;
+        
+        // إذا كانت هذه أول مرة، احفظ فقط
+        if (NS.state.knownFollowers.length === 0) {
+            NS.state.knownFollowers = Array.from(handles).slice(-2000);
+            NS.forceSaveSettings();
+            NS.pushLog('tracker', `📥 حفظ ${handles.size} متابع`);
+            return;
+        }
+        
         const prev = new Set(NS.state.knownFollowers);
         const lost = Array.from(prev).filter(h => !handles.has(h));
         if (lost.length > 0 && prev.size > 0) {
-            lost.slice(0, 5).forEach(h => NS.pushLog('unfollower', `👋 ${h}`));
+            lost.slice(0, 5).forEach(h => NS.pushLog('unfollower', `👋 ألغى متابعتك: ${h}`));
         }
         const merged = new Set([...NS.state.knownFollowers, ...handles]);
         NS.state.knownFollowers = Array.from(merged).slice(-2000);
         NS.forceSaveSettings();
+        NS.pushLog('tracker', `👥 متابعون معروفون: ${NS.state.knownFollowers.length}`);
     };
+
 })();
