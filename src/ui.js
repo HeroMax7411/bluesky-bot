@@ -1,9 +1,18 @@
+/* ═══════════════════════════════════════════════════════════
+   src/ui.js — واجهة المستخدم والحلقة الرئيسية
+   يحتوي على: اللوحة، الحلقة، دوال العرض، التصدير
+   ═══════════════════════════════════════════════════════════ */
+
 (function () {
     'use strict';
-    const NS = window.__BSKY;
-    if (!NS) return;
 
-    /* ════════════════ Auto Detect Handle ════════════════ */
+    const NS = window.__BSKY;
+    if (!NS) {
+        console.error('❌ ui.js: يجب تحميل core.js و dom.js و actions.js أولاً');
+        return;
+    }
+
+    /* ════════════════ كشف اسم المستخدم ════════════════ */
     NS.autoDetectMyHandle = function () {
         if (NS.state.myHandle) return;
         const link = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]') ||
@@ -19,19 +28,24 @@
         }
     };
 
-    /* ════════════════ Scroll ════════════════ */
+    /* ════════════════ التمرير ════════════════ */
     NS.findScrollContainer = function () {
         const now = Date.now();
+
+        // استخدام الكاش (< 5 ثوان، نفس الصفحة)
         if (NS.scrollCache.el && now - NS.scrollCache.ts < 5000 &&
-            NS.scrollCache.path === location.pathname && document.contains(NS.scrollCache.el) &&
+            NS.scrollCache.path === location.pathname &&
+            document.contains(NS.scrollCache.el) &&
             NS.scrollCache.el.scrollHeight > NS.scrollCache.el.clientHeight + 100) {
             return NS.scrollCache.el;
         }
+
         const de = document.scrollingElement || document.documentElement;
         if (de && de.scrollHeight > de.clientHeight + 300) {
             NS.scrollCache = { el: de, ts: now, path: location.pathname };
             return de;
         }
+
         let best = null, bestScore = 0;
         for (const el of document.querySelectorAll('main, main *')) {
             if (NS.isInsidePanel(el)) continue;
@@ -44,12 +58,13 @@
             const score = sc - d;
             if (score > bestScore) { bestScore = score; best = el; }
         }
+
         const result = best || de;
         NS.scrollCache = { el: result, ts: now, path: location.pathname };
         return result;
     };
 
-    NS.autoScrollDown = async function (aggressive = false, myGen) {
+    NS.autoScrollDown = async function (aggressive, myGen) {
         if (!NS.state.autoScroll) return;
         const c = NS.findScrollContainer();
         if (!c || NS.isInsidePanel(c)) return;
@@ -60,7 +75,7 @@
         await NS.sleepGen(aggressive ? NS.rand(2500, 4000) : NS.rand(1500, 3000), myGen);
     };
 
-    /* ════════════════ Memory Reset ════════════════ */
+    /* ════════════════ تصفير الذاكرة الدوري ════════════════ */
     NS.maybeResetMemory = function () {
         const e = (Date.now() - NS.lastMemoryReset) / 60000;
         if (e >= NS.state.resetMemoryEveryMin) {
@@ -72,26 +87,34 @@
         }
     };
 
-    /* ════════════════ Main Loop ════════════════ */
+    /* ════════════════ الحلقة الرئيسية ════════════════ */
     NS.botLoop = async function () {
         const myGen = ++NS.loopGeneration;
         NS.activeLoopId = myGen;
         NS.cyclesWithoutAction = 0;
+
+        // كشف اسم المستخدم (بحد أقصى 5 محاولات)
         if (!NS.state.myHandle && NS.handleDetectionAttempts < 5) {
             NS.autoDetectMyHandle();
             NS.handleDetectionAttempts++;
         }
+
         console.log(`▶️ جيل ${myGen}`);
+
         while (NS.activeLoopId === myGen && myGen === NS.loopGeneration) {
             let actionCount = 0;
             try {
+                // فحص الجدولة الزمنية
                 if (NS.state.scheduleEnabled && !NS.isWithinSchedule()) {
                     NS.setFooter('⏰ خارج الجدولة');
-                    await NS.sleepGen(60000, myGen); continue;
+                    await NS.sleepGen(60000, myGen);
+                    continue;
                 }
+
                 if (!NS.state.paused) {
                     NS.checkScheduledPosts();
                     NS.checkContentCalendar();
+
                     const onN = location.pathname.includes('/notifications');
                     const onM = location.pathname.includes('/messages');
                     const onF = location.pathname.includes('/followers');
@@ -99,10 +122,12 @@
                     if (onF) NS.trackCurrentFollowers();
                     if (onN) NS.collectEngagers();
 
+                    // الرسائل أولاً
                     if (NS.state.autoReplyMessages && onM)
                         actionCount += await NS.doReplyToMessages(myGen);
                     if (myGen !== NS.loopGeneration) break;
 
+                    // الإشعارات
                     if (NS.state.autoFollowBack && onN)
                         actionCount += await NS.doFollowBack(myGen);
                     if (myGen !== NS.loopGeneration) break;
@@ -115,10 +140,13 @@
                         actionCount += await NS.doLikeCommenters(myGen);
                     if (myGen !== NS.loopGeneration) break;
 
-                    if (NS.state.autoLike) actionCount += await NS.doAutoLike(myGen);
+                    // العام
+                    if (NS.state.autoLike)
+                        actionCount += await NS.doAutoLike(myGen);
                     if (myGen !== NS.loopGeneration) break;
 
-                    if (NS.state.autoRepost) actionCount += await NS.doAutoRepost(myGen);
+                    if (NS.state.autoRepost)
+                        actionCount += await NS.doAutoRepost(myGen);
                     if (myGen !== NS.loopGeneration) break;
 
                     if (NS.state.autoFollow && !(onN && NS.state.autoFollowBack))
@@ -129,7 +157,8 @@
                         actionCount += await NS.doCleanupNonFollowers(myGen);
                     if (myGen !== NS.loopGeneration) break;
 
-                    if (NS.state.followEngagers) actionCount += await NS.doFollowEngagers(myGen);
+                    if (NS.state.followEngagers)
+                        actionCount += await NS.doFollowEngagers(myGen);
                     if (myGen !== NS.loopGeneration) break;
 
                     if (NS.state.autoReply && !onN && !onM)
@@ -138,38 +167,48 @@
 
                     NS.maybeResetMemory();
 
+                    // تعامل مع عدم وجود نشاط
                     if (actionCount === 0) {
                         NS.cyclesWithoutAction++;
                         NS.setFooter(`⚠️ لا جديد (${NS.cyclesWithoutAction}/${NS.state.stuckThreshold})`);
                         if (NS.cyclesWithoutAction >= NS.state.stuckThreshold) {
                             await NS.autoScrollDown(true, myGen);
                             NS.cyclesWithoutAction = 0;
-                        } else await NS.autoScrollDown(false, myGen);
+                        } else {
+                            await NS.autoScrollDown(false, myGen);
+                        }
                     } else {
                         NS.cyclesWithoutAction = 0;
                         await NS.autoScrollDown(false, myGen);
+
+                        // الاستراحة البشرية
                         if (NS.state.humanBreakEnabled) {
                             NS.state.actionCounter = (NS.state.actionCounter || 0) + actionCount;
                             const threshold = NS.rand(NS.state.humanBreakEveryMin, NS.state.humanBreakEveryMax);
                             if (NS.state.actionCounter >= threshold) {
                                 const bm = NS.rand(NS.state.breakDurationMin, NS.state.breakDurationMax);
                                 NS.pushLog('break', `☕ استراحة ${bm} د`);
+                                NS.setFooter(`☕ استراحة ${bm} دقيقة...`);
                                 NS.state.actionCounter = 0;
                                 NS.forceSaveSettings();
                                 if (!await NS.sleepGen(bm * 60000 + NS.rand(0, 30000), myGen)) break;
-                            } else NS.forceSaveSettings();
+                            } else {
+                                NS.forceSaveSettings();
+                            }
                         }
                     }
                 }
-            } catch(err) {
-                console.error('🔴', err);
+            } catch (err) {
+                console.error('🔴 خطأ في الحلقة:', err);
                 NS.captureError(err, 'botLoop');
                 if (actionCount === 0) NS.cyclesWithoutAction++;
             }
+
             NS.setFooter(NS.state.paused ? '⏸️ موقوف' : `⏱️ يعمل — ${actionCount} فعل`);
             const wait = actionCount > 0 ? NS.state.fastCycleMs : NS.rand(4000, 7000);
             if (!await NS.sleepGen(wait, myGen)) break;
         }
+
         if (NS.activeLoopId === myGen) NS.activeLoopId = null;
         console.log(`🔚 خرج جيل ${myGen}`);
     };
@@ -179,14 +218,104 @@
         if (el) el.innerText = msg + ' • Shift+B';
     };
 
-    /* ════════════════ Create Dashboard ════════════════ */
+    /* ════════════════ دوال التصدير ════════════════ */
+    NS.exportToSheets = function () {
+        const rows = [['التاريخ','إعجابات','متابعات','إلغاء','ردود','رد متابعة','إعجاب معلق','رد إشعار','رد رسالة','منشورات','إعادة نشر']];
+        NS.stats.history.forEach(h => rows.push([
+            h.d, h.likes || 0, h.follows || 0, h.unfollows || 0,
+            h.replies || 0, h.followBacks || 0, h.commentLikes || 0,
+            h.notifReplies || 0, h.messageReplies || 0, h.posts || 0, h.reposts || 0
+        ]));
+        const tsv = rows.map(r => r.join('\t')).join('\n');
+        if (typeof GM_setClipboard === 'function') GM_setClipboard(tsv);
+        else navigator.clipboard.writeText(tsv);
+        alert('✅ تم نسخ البيانات بصيغة TSV.\nالصقها في Google Sheets (Ctrl+V)');
+    };
+
+    NS.exportSettings = function () {
+        const data = {
+            version: NS.version,
+            exported: new Date().toISOString(),
+            state: { ...NS.state },
+            stats: NS.stats,
+            profiles: NS.profiles
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `bsky-bot-${NS.todayStr()}.json`;
+        a.click();
+        NS.notify('تصدير', 'تم');
+    };
+
+    NS.importSettings = function (file) {
+        const r = new FileReader();
+        r.onload = (e) => {
+            try {
+                const d = JSON.parse(e.target.result);
+                if (d.state) Object.assign(NS.state, d.state);
+                if (d.stats) { Object.assign(NS.stats, d.stats); NS.saveStats(); }
+                if (d.profiles) { NS.profiles = d.profiles; NS.saveProfiles(); }
+                NS.forceSaveSettings();
+                alert('✅ تم الاستيراد. جاري إعادة التحميل...');
+                location.reload();
+            } catch (err) {
+                alert('❌ ملف غير صالح: ' + err.message);
+            }
+        };
+        r.readAsText(file);
+    };
+
+    NS.saveCurrentAsProfile = function (name) {
+        const profile = {
+            name,
+            handle: NS.state.myHandle,
+            appPassword: NS.state.blueskyAppPassword,
+            settings: JSON.parse(JSON.stringify(NS.state))
+        };
+        delete profile.settings.processedLikes;
+        delete profile.settings.activityLog;
+        NS.profiles.push(profile);
+        NS.saveProfiles();
+        alert(`✅ حُفظ الحساب: ${name}`);
+    };
+
+    NS.switchProfile = function (idx) {
+        if (!NS.profiles[idx]) return;
+        const current = NS.profiles[NS.activeProfileIdx];
+        if (current) current.settings = JSON.parse(JSON.stringify(NS.state));
+
+        const p = NS.profiles[idx];
+        NS.state = Object.assign({}, NS.defaultState, p.settings);
+        window.__bskyState = NS.state;
+
+        ['unfollowedUsers','processedLikes','processedFollows','processedFollowBacks',
+         'processedCommentLikes','processedNotifReplies','processedMessages','processedReposts',
+         'processedPosts','activityLog','scheduledPosts','knownFollowers','engagerQueue']
+            .forEach(k => { if (!Array.isArray(NS.state[k])) NS.state[k] = []; });
+
+        NS.activeProfileIdx = idx;
+        NS.forceSaveSettings();
+        NS.saveProfiles();
+        location.reload();
+    };
+
+    NS.deleteProfile = function (idx) {
+        if (!confirm('حذف الحساب؟')) return;
+        NS.profiles.splice(idx, 1);
+        if (NS.activeProfileIdx >= NS.profiles.length) NS.activeProfileIdx = 0;
+        NS.saveProfiles();
+        NS.renderProfiles();
+    };
+
+    /* ════════════════ إنشاء اللوحة ════════════════ */
     NS.createDashboard = function () {
         if (document.getElementById(NS.PANEL_ID)) return;
 
-        const panel = document.createElement('div');
-        panel.id = NS.PANEL_ID;
-        panel.style.display = NS.state.collapsed ? 'none' : 'flex';
+        const s = NS.state;
+        const esc = NS.esc;
 
+        // ✅ الزر المصغّر B
         const mini = document.createElement('div');
         mini.id = NS.PANEL_ID + '-mini';
         mini.innerHTML = 'B';
@@ -195,10 +324,11 @@
             width: '50px', height: '50px', borderRadius: '12px',
             background: 'linear-gradient(135deg, #0085ff, #0066cc)',
             color: '#fff', fontSize: '26px', fontWeight: '900',
-            display: NS.state.collapsed ? 'flex' : 'none',
+            display: s.collapsed ? 'flex' : 'none',
             alignItems: 'center', justifyContent: 'center',
             cursor: 'pointer', boxShadow: '0 4px 16px rgba(0,133,255,0.5)',
-            fontFamily: 'Arial, sans-serif', userSelect: 'none', transition: 'transform 0.2s'
+            fontFamily: 'Arial, sans-serif', userSelect: 'none',
+            transition: 'transform 0.2s'
         });
         mini.onmouseenter = () => mini.style.transform = 'scale(1.1)';
         mini.onmouseleave = () => mini.style.transform = 'scale(1)';
@@ -206,14 +336,29 @@
             mini.style.display = 'none';
             const p = document.getElementById(NS.PANEL_ID);
             if (p) p.style.display = 'flex';
-            NS.state.collapsed = false; NS.saveSettings();
+            NS.state.collapsed = false;
+            NS.saveSettings();
         };
         document.body.appendChild(mini);
 
+        // ✅ اللوحة الرئيسية
+        const panel = document.createElement('div');
+        panel.id = NS.PANEL_ID;
+        panel.style.display = s.collapsed ? 'none' : 'flex';
+        panel.innerHTML = NS.buildDashboardHTML();
+        document.body.appendChild(panel);
+
+        NS.injectCSS();
+        NS.bindDashboardEvents(panel, mini);
+        NS.renderAll();
+    };
+
+    /* ════════════════ HTML اللوحة ════════════════ */
+    NS.buildDashboardHTML = function () {
         const s = NS.state;
         const esc = NS.esc;
 
-        panel.innerHTML = `
+        return `
         <div id="b11-header">
             <div class="b11-brand">
                 <div class="b11-logo">B</div>
@@ -431,6 +576,23 @@
         </div>
 
         <div class="b11-pane" data-p="settings" style="display:none">
+            <div class="b11-section" style="border:1px solid #22c55e;background:linear-gradient(135deg,#0a1f12,#0d1a0f);">
+                <div class="b11-section-title" style="color:#22c55e;">🔄 تحديثات البوت</div>
+                <div style="font-size:11px;color:#cbd5e1;text-align:center;margin:4px 0;">
+                    الإصدار الحالي: <b style="color:#22c55e;">v${NS.version}</b>
+                </div>
+                <div id="b11-update-status" style="font-size:10px;color:#94a3b8;text-align:center;margin:6px 0;min-height:16px;">
+                    ✅ فحص تلقائي كل 24 ساعة
+                </div>
+                <button id="b11-check-update" class="b11-btn" style="background:linear-gradient(135deg,#22c55e,#16a34a);font-size:12px;padding:10px;">
+                    🔄 التحقق من التحديثات الآن
+                </button>
+                <label style="margin-top:6px;font-size:10px;">
+                    <input type="checkbox" id="b11-auto-update" ${s.autoUpdateCheck !== false ? 'checked' : ''}> 
+                    فحص تلقائي كل 24 ساعة
+                </label>
+                <div id="b11-last-check" style="font-size:9px;color:#64748b;text-align:center;margin-top:4px;"></div>
+            </div>
             <div class="b11-section">
                 <div class="b11-section-title">⏰ جدولة زمنية</div>
                 <label><input type="checkbox" id="b11-sch-on" ${s.scheduleEnabled?'checked':''}> تفعيل</label>
@@ -495,23 +657,6 @@
                 <div style="font-size:10px;color:#94a3b8;text-align:center;margin-top:4px;">
                     Sayed Alhlwani — v${NS.version}
                 </div>
-                            <div class="b11-section" style="border:1px solid #22c55e;background:linear-gradient(135deg,#0a1f12,#0d1a0f);">
-                <div class="b11-section-title" style="color:#22c55e;">🔄 تحديثات البوت</div>
-                <div style="font-size:11px;color:#cbd5e1;text-align:center;margin:4px 0;">
-                    الإصدار الحالي: <b style="color:#22c55e;">v${NS.version}</b>
-                </div>
-                <div id="b11-update-status" style="font-size:10px;color:#94a3b8;text-align:center;margin:6px 0;min-height:16px;">
-                    ✅ فحص تلقائي كل 24 ساعة
-                </div>
-                <button id="b11-check-update" class="b11-btn" style="background:linear-gradient(135deg,#22c55e,#16a34a);font-size:12px;padding:10px;">
-                    🔄 التحقق من التحديثات الآن
-                </button>
-                <label style="margin-top:6px;font-size:10px;">
-                    <input type="checkbox" id="b11-auto-update" ${NS.state.autoUpdateCheck !== false ? 'checked' : ''}> 
-                    فحص تلقائي كل 24 ساعة
-                </label>
-                <div id="b11-last-check" style="font-size:9px;color:#64748b;text-align:center;margin-top:4px;"></div>
-            </div>
             </div>
         </div>
 
@@ -545,9 +690,12 @@
         <div id="b11-resize"></div>
         <div id="b11-footer">جاهز • Shift+B للإظهار/الإخفاء</div>
         `;
-        document.body.appendChild(panel);
+    };
 
-        /* ═══ CSS ═══ */
+    /* ════════════════ CSS اللوحة ════════════════ */
+    NS.injectCSS = function () {
+        if (document.getElementById('b11-css')) return;
+        const s = NS.state;
         const css = document.createElement('style');
         css.id = 'b11-css';
         css.textContent = `
@@ -595,8 +743,11 @@
             #b11-footer{padding:6px 12px;font-size:10px;color:#10b981;background:#0a121e;border-top:1px solid #1e293b;text-align:center;border-bottom-left-radius:14px;border-bottom-right-radius:14px;}
         `;
         document.head.appendChild(css);
+    };
 
-        /* ═══ Tabs ═══ */
+    /* ════════════════ ربط الأحداث ════════════════ */
+    NS.bindDashboardEvents = function (panel, mini) {
+        // التبويبات
         document.querySelectorAll('.b11-tab').forEach(tab => {
             tab.onclick = () => {
                 document.querySelectorAll('.b11-tab').forEach(t => t.classList.remove('active'));
@@ -610,19 +761,25 @@
             };
         });
 
-        /* ═══ Binds ═══ */
-        const bind = (id, key, isCheck = false) => {
+        // ربط المدخلات
+        const bind = (id, key, isCheck) => {
             const el = document.getElementById(id);
             if (!el) return;
-            const ev = isCheck ? 'onchange' : 'oninput';
-            el[ev] = e => { NS.state[key] = isCheck ? e.target.checked : e.target.value; NS.saveSettings(); };
+            el[isCheck ? 'onchange' : 'oninput'] = e => {
+                NS.state[key] = isCheck ? e.target.checked : e.target.value;
+                NS.saveSettings();
+            };
         };
-        const bn = (id, key, min = 0, max = 100000) => {
+        const bn = (id, key, min, max) => {
+            min = min || 0; max = max || 100000;
             const el = document.getElementById(id);
             if (!el) return;
             el.oninput = e => {
                 const v = parseInt(e.target.value, 10);
-                if (!isNaN(v) && v >= min && v <= max) { NS.state[key] = v; NS.saveSettings(); }
+                if (!isNaN(v) && v >= min && v <= max) {
+                    NS.state[key] = v;
+                    NS.saveSettings();
+                }
             };
         };
 
@@ -661,14 +818,23 @@
         bind('b11-ml','mlPreferences',true);
         bind('b11-track-unf','trackUnfollowers',true);
 
+        // كلمة المرور
         const passEl = document.getElementById('b11-app-pass');
-        if (passEl) passEl.onchange = e => { NS.setEncryptedPass(e.target.value); e.target.value = ''; };
+        if (passEl) passEl.onchange = e => {
+            NS.setEncryptedPass(e.target.value);
+            e.target.value = '';
+        };
 
+        // تقويم المحتوى
         ['sun','mon','tue','wed','thu','fri','sat'].forEach(d => {
             const el = document.getElementById(`b11-cal-${d}`);
-            if (el) el.oninput = e => { NS.state.calendar[d] = e.target.value; NS.saveSettings(); };
+            if (el) el.oninput = e => {
+                NS.state.calendar[d] = e.target.value;
+                NS.saveSettings();
+            };
         });
 
+        // الأرقام
         bn('b11-rate','rateLimitPerMin',1,30);
         bn('b11-hb-min','humanBreakEveryMin',5,100);
         bn('b11-hb-max','humanBreakEveryMax',5,200);
@@ -685,21 +851,23 @@
         bn('b11-weather-lat','weatherLat',-90,90);
         bn('b11-weather-lon','weatherLon',-180,180);
 
-        /* ═══ Buttons ═══ */
+        // إضافة منشور
         document.getElementById('b11-add-post').onclick = () => {
             const text = document.getElementById('b11-post-text').value.trim();
             const timeInput = document.getElementById('b11-post-time').value;
             const mediaInput = document.getElementById('b11-post-media');
             const alt = document.getElementById('b11-post-alt').value;
+
             if (!text && !mediaInput.files[0]) { alert('أدخل نصاً أو وسائط'); return; }
             if (!timeInput) { alert('حدد الوقت'); return; }
             const time = new Date(timeInput).getTime();
             if (isNaN(time)) { alert('وقت غير صالح'); return; }
-            const addPost = (blob = null) => {
+
+            const addPost = (blob) => {
                 NS.state.scheduledPosts.push({
                     id: Date.now() + '_' + Math.random().toString(36).slice(2, 8),
                     text, time, posted: false,
-                    mediaBlob: blob, mediaAlt: alt,
+                    mediaBlob: blob || null, mediaAlt: alt,
                     mediaType: blob && blob.type && blob.type.startsWith('video') ? 'video' : 'image'
                 });
                 NS.forceSaveSettings();
@@ -716,7 +884,8 @@
 
         document.getElementById('b11-clear-posts').onclick = () => {
             NS.state.scheduledPosts = NS.state.scheduledPosts.filter(p => !p.posted);
-            NS.forceSaveSettings(); NS.renderScheduledPosts();
+            NS.forceSaveSettings();
+            NS.renderScheduledPosts();
         };
 
         document.getElementById('b11-check-weather').onclick = async () => {
@@ -735,67 +904,24 @@
             NS.notify('شكراً 💙', 'شكراً لدعمك!');
         };
 
-        document.getElementById('b11-dev').onclick = () => { window.open(NS.DEV_URL, '_blank'); };
-        document.getElementById('b11-github').onclick = () => { window.open(`https://github.com/${NS.GITHUB_REPO}`, '_blank'); };
+        document.getElementById('b11-dev').onclick = () => window.open(NS.DEV_URL, '_blank');
+        document.getElementById('b11-github').onclick = () => window.open(`https://github.com/${NS.GITHUB_REPO}`, '_blank');
 
+        // أزرار الأخطاء
         document.getElementById('b11-report-error').onclick = () => NS.reportErrorToGitHub();
         document.getElementById('b11-export-errors').onclick = NS.exportErrorLog;
         document.getElementById('b11-clear-errors').onclick = NS.clearErrorLog;
 
+        // تصدير/استيراد
         document.getElementById('b11-export-settings').onclick = NS.exportSettings;
         document.getElementById('b11-import-settings').onclick = () => {
             document.getElementById('b11-import-file').click();
-
-
-
-
-        // 🔄 أزرار التحديث
-        document.getElementById('b11-check-update').onclick = async () => {
-            const btn = document.getElementById('b11-check-update');
-            const status = document.getElementById('b11-update-status');
-            btn.disabled = true;
-            btn.innerText = '⏳ جاري الفحص...';
-            status.innerText = '⏳ جاري التحقق من GitHub...';
-            
-            const hasUpdate = await NS.checkForUpdate(false);
-            
-            btn.disabled = false;
-            btn.innerText = '🔄 التحقق من التحديثات الآن';
-            status.innerText = hasUpdate ? '🆕 تحديث متوفر!' : '✅ أنت تستخدم أحدث نسخة';
-            
-            // تحديث آخر وقت فحص
-            const lastCheckEl = document.getElementById('b11-last-check');
-            if (lastCheckEl) {
-                lastCheckEl.innerText = `آخر فحص: ${new Date().toLocaleString('ar-EG')}`;
-            }
-        };
-        
-        // حفظ تفضيل التحديث التلقائي
-        const autoUpdEl = document.getElementById('b11-auto-update');
-        if (autoUpdEl) {
-            autoUpdEl.onchange = e => {
-                NS.state.autoUpdateCheck = e.target.checked;
-                NS.saveSettings();
-            };
-        }
-        
-        // عرض آخر فحص
-        const lastCheckEl = document.getElementById('b11-last-check');
-        if (lastCheckEl) {
-            const last = parseInt(localStorage.getItem('bsky_bot_last_update_check') || '0', 10);
-            if (last > 0) {
-                lastCheckEl.innerText = `آخر فحص: ${new Date(last).toLocaleString('ar-EG')}`;
-            }
-        }
-
-
-
-            
         };
         document.getElementById('b11-import-file').onchange = e => {
             if (e.target.files[0]) NS.importSettings(e.target.files[0]);
         };
 
+        // أزرار التحكم
         document.getElementById('b11-restart').onclick = () => {
             NS.setFooter('⏳ إعادة تشغيل...');
             NS.loopGeneration++;
@@ -810,7 +936,9 @@
         document.getElementById('b11-scroll').onclick = () => NS.autoScrollDown(true, NS.loopGeneration);
 
         document.getElementById('b11-test').onclick = () => {
-            const f = NS.collectAllFollowButtons(), l = NS.collectAllLikeButtons(), r = NS.collectAllRepostButtons();
+            const f = NS.collectAllFollowButtons();
+            const l = NS.collectAllLikeButtons();
+            const r = NS.collectAllRepostButtons();
             alert([
                 `📄 ${location.pathname}`,
                 `👤 اسمك: ${NS.state.myHandle || '؟'}`,
@@ -829,43 +957,50 @@
                 ['processedLikes','processedFollows','processedFollowBacks','processedCommentLikes',
                  'processedNotifReplies','processedMessages','processedReposts','processedPosts']
                     .forEach(k => NS.state[k] = []);
-                NS.state.unfollowedUsers = []; NS.state.actionCounter = 0;
+                NS.state.unfollowedUsers = [];
+                NS.state.actionCounter = 0;
                 NS.forceSaveSettings();
                 NS.pushLog('info', '🧠 مسح الذاكرة');
                 alert('✅');
             }
         };
 
+        // الثيم
         document.getElementById('b11-theme').onclick = () => {
             NS.state.theme = NS.state.theme === 'dark' ? 'light' : 'dark';
             const bg = NS.state.theme === 'light' ? '#f1f5f9' : '#161e27';
             const cl = NS.state.theme === 'light' ? '#0f172a' : '#e2e8f0';
-            panel.style.background = bg; panel.style.color = cl;
+            panel.style.background = bg;
+            panel.style.color = cl;
             NS.saveSettings();
         };
 
+        // طي وإغلاق
         document.getElementById('b11-collapse').onclick = () => {
             panel.style.display = 'none';
             mini.style.display = 'flex';
-            NS.state.collapsed = true; NS.saveSettings();
+            NS.state.collapsed = true;
+            NS.saveSettings();
         };
-
         document.getElementById('b11-close').onclick = () => {
             panel.style.display = 'none';
             mini.style.display = 'flex';
-            NS.state.collapsed = true; NS.saveSettings();
+            NS.state.collapsed = true;
+            NS.saveSettings();
         };
 
+        // Shift+B
         document.addEventListener('keydown', e => {
             if (e.shiftKey && e.key.toLowerCase() === 'b') {
                 const vis = panel.style.display !== 'none';
                 panel.style.display = vis ? 'none' : 'flex';
                 mini.style.display = vis ? 'flex' : 'none';
-                NS.state.collapsed = vis; NS.saveSettings();
+                NS.state.collapsed = vis;
+                NS.saveSettings();
             }
         });
 
-        /* ═══ Drag ═══ */
+        // السحب
         const handle = document.getElementById('b11-header');
         let p1 = 0, p2 = 0, p3 = 0, p4 = 0;
         handle.onmousedown = e => {
@@ -875,7 +1010,8 @@
             document.onmouseup = () => { document.onmouseup = null; document.onmousemove = null; };
             document.onmousemove = ev => {
                 ev.preventDefault();
-                p1 = p3 - ev.clientX; p2 = p4 - ev.clientY;
+                p1 = p3 - ev.clientX;
+                p2 = p4 - ev.clientY;
                 p3 = ev.clientX; p4 = ev.clientY;
                 panel.style.top = (panel.offsetTop - p2) + "px";
                 panel.style.left = (panel.offsetLeft - p1) + "px";
@@ -883,7 +1019,7 @@
             };
         };
 
-        /* ═══ Resize ═══ */
+        // التكبير/التصغير
         const resizer = document.getElementById('b11-resize');
         let rw = 0, rh = 0, rx = 0, ry = 0;
         resizer.onmousedown = e => {
@@ -894,51 +1030,107 @@
             document.onmousemove = ev => {
                 const w = Math.max(320, Math.min(900, rw + (rx - ev.clientX)));
                 const h = Math.max(300, Math.min(900, rh + (ev.clientY - ry)));
-                panel.style.width = w + 'px'; panel.style.height = h + 'px';
+                panel.style.width = w + 'px';
+                panel.style.height = h + 'px';
                 NS.state.panelSize = { w, h };
             };
         };
         resizer.onmouseup = () => { NS.forceSaveSettings(); };
 
-        /* ═══ Export/Stats ═══ */
+        // تصدير CSV
         document.getElementById('b11-export-csv').onclick = () => {
             const rows = [['date','likes','follows','unfollows','replies','followBacks',
                            'commentLikes','notifReplies','messageReplies','posts','reposts']];
-            NS.stats.history.forEach(h => rows.push([h.d, h.likes||0, h.follows||0,
-                h.unfollows||0, h.replies||0, h.followBacks||0, h.commentLikes||0,
-                h.notifReplies||0, h.messageReplies||0, h.posts||0, h.reposts||0]));
-            const blob = new Blob([rows.map(r => r.join(',')).join('\n')], {type:'text/csv'});
+            NS.stats.history.forEach(h => rows.push([
+                h.d, h.likes || 0, h.follows || 0, h.unfollows || 0,
+                h.replies || 0, h.followBacks || 0, h.commentLikes || 0,
+                h.notifReplies || 0, h.messageReplies || 0, h.posts || 0, h.reposts || 0
+            ]));
+            const blob = new Blob([rows.map(r => r.join(',')).join('\n')], { type: 'text/csv' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
-            a.download = 'bsky-stats.csv'; a.click();
+            a.download = 'bsky-stats.csv';
+            a.click();
         };
         document.getElementById('b11-export-sheets').onclick = NS.exportToSheets;
 
+        // تصفير الإحصائيات
         document.getElementById('b11-reset-stats').onclick = () => {
             if (confirm('تصفير الإحصائيات؟')) {
-                NS.stats = { likes:0, follows:0, unfollows:0, replies:0, followBacks:0,
-                          commentLikes:0, notifReplies:0, messageReplies:0, posts:0,
-                          reposts:0, engagerFollows:0, history:[] };
-                NS.saveStats(); NS.updateStatsUI(); NS.renderChart();
+                NS.stats = {
+                    likes: 0, follows: 0, unfollows: 0, replies: 0, followBacks: 0,
+                    commentLikes: 0, notifReplies: 0, messageReplies: 0, posts: 0,
+                    reposts: 0, engagerFollows: 0, history: []
+                };
+                NS.saveStats();
+                NS.updateStatsUI();
+                NS.renderChart();
             }
         };
+
+        // مسح السجل
         document.getElementById('b11-log-clear').onclick = () => {
             if (confirm('مسح السجل؟')) {
-                NS.state.activityLog = []; NS.forceSaveSettings(); NS.renderLog();
+                NS.state.activityLog = [];
+                NS.forceSaveSettings();
+                NS.renderLog();
             }
         };
 
-        /* ═══ Render all ═══ */
-        NS.renderLog(); NS.updateStatsUI(); NS.renderScheduledPosts();
-        NS.renderDailyStats(); NS.renderProfiles(); NS.renderChart();
-        NS.renderABReport(); NS.renderMLReport(); NS.renderErrorTab();
+        // 🔄 أزرار التحديث
+        const checkUpdBtn = document.getElementById('b11-check-update');
+        if (checkUpdBtn) {
+            checkUpdBtn.onclick = async () => {
+                const status = document.getElementById('b11-update-status');
+                checkUpdBtn.disabled = true;
+                checkUpdBtn.innerText = '⏳ جاري الفحص...';
+                if (status) status.innerText = '⏳ جاري التحقق من GitHub...';
+
+                const hasUpdate = await NS.checkForUpdate(false);
+
+                checkUpdBtn.disabled = false;
+                checkUpdBtn.innerText = '🔄 التحقق من التحديثات الآن';
+                if (status) status.innerText = hasUpdate ? '🆕 تحديث متوفر!' : '✅ أنت تستخدم أحدث نسخة';
+
+                const lastEl = document.getElementById('b11-last-check');
+                if (lastEl) lastEl.innerText = `آخر فحص: ${new Date().toLocaleString('ar-EG')}`;
+            };
+        }
+
+        const autoUpdEl = document.getElementById('b11-auto-update');
+        if (autoUpdEl) {
+            autoUpdEl.onchange = e => {
+                NS.state.autoUpdateCheck = e.target.checked;
+                NS.saveSettings();
+            };
+        }
+
+        const lastCheckEl = document.getElementById('b11-last-check');
+        if (lastCheckEl) {
+            const last = parseInt(localStorage.getItem('bsky_bot_last_update_check') || '0', 10);
+            if (last > 0) lastCheckEl.innerText = `آخر فحص: ${new Date(last).toLocaleString('ar-EG')}`;
+        }
     };
 
-    /* ════════════════ Render Functions ════════════════ */
+    /* ════════════════ دوال العرض ════════════════ */
+    NS.renderAll = function () {
+        NS.renderLog();
+        NS.updateStatsUI();
+        NS.renderScheduledPosts();
+        NS.renderDailyStats();
+        NS.renderProfiles();
+        NS.renderChart();
+        NS.renderABReport();
+        NS.renderMLReport();
+        NS.renderErrorTab();
+    };
+
     NS.updateStatsUI = function () {
         const s = (id, v) => { const e = document.getElementById(id); if (e) e.innerText = v; };
-        s('st-likes', NS.stats.likes); s('st-follows', NS.stats.follows);
-        s('st-unfollows', NS.stats.unfollows); s('st-replies', NS.stats.replies);
+        s('st-likes', NS.stats.likes);
+        s('st-follows', NS.stats.follows);
+        s('st-unfollows', NS.stats.unfollows);
+        s('st-replies', NS.stats.replies);
         s('st-followbacks', NS.stats.followBacks || 0);
         s('st-commentlikes', NS.stats.commentLikes || 0);
         s('st-notifreplies', NS.stats.notifReplies || 0);
@@ -951,13 +1143,15 @@
     NS.updateDebugInfo = function (type, val) {
         const map = { like: 'b11-dbg-like', follow: 'b11-dbg-follow' };
         const icons = { like: '❤️', follow: '👤' };
-        const el = document.getElementById(map[type]); if (!el) return;
+        const el = document.getElementById(map[type]);
+        if (!el) return;
         const c = val > 0 ? '#10b981' : '#ef4444';
         el.innerHTML = `${icons[type]}<b style="color:${c}">${val}</b>`;
     };
 
     NS.renderLog = function () {
-        const el = document.getElementById('b11-log-box'); if (!el) return;
+        const el = document.getElementById('b11-log-box');
+        if (!el) return;
         el.innerHTML = NS.state.activityLog.slice(-100).reverse().map(l => {
             const color = l.type.includes('fail') ? '#ef4444'
                         : l.type.includes('break') ? '#a855f7'
@@ -973,12 +1167,14 @@
                         : '#cbd5e1';
             return `<div style="color:${color}">${new Date(l.t).toLocaleTimeString()} • ${l.type} • ${NS.esc(l.detail)}</div>`;
         }).join('');
+
         const last = document.getElementById('b11-last-result');
         if (last && NS.state.lastClickResult) last.innerText = NS.state.lastClickResult;
     };
 
     NS.renderScheduledPosts = function () {
-        const el = document.getElementById('b11-post-list'); if (!el) return;
+        const el = document.getElementById('b11-post-list');
+        if (!el) return;
         if (NS.state.scheduledPosts.length === 0) {
             el.innerHTML = '<div style="color:#64748b;text-align:center;padding:6px;">لا توجد منشورات</div>';
             return;
@@ -995,20 +1191,22 @@
     };
 
     NS.renderDailyStats = function () {
-        const el = document.getElementById('b11-daily'); if (!el) return;
+        const el = document.getElementById('b11-daily');
+        if (!el) return;
         const c = NS.getDailyCounters();
         el.innerHTML = `
-            ❤️ ${c.likes||0}/${NS.state.dailyLimitLikes} |
-            👤 ${c.follows||0}/${NS.state.dailyLimitFollows} |
-            💬 ${c.replies||0}/${NS.state.dailyLimitReplies} |
-            📨 ${c.messages||0}/${NS.state.dailyLimitMessages} |
-            📝 ${c.posts||0}/${NS.state.dailyLimitPosts} |
-            🔁 ${c.reposts||0}/${NS.state.dailyLimitReposts}
+            ❤️ ${c.likes || 0}/${NS.state.dailyLimitLikes} |
+            👤 ${c.follows || 0}/${NS.state.dailyLimitFollows} |
+            💬 ${c.replies || 0}/${NS.state.dailyLimitReplies} |
+            📨 ${c.messages || 0}/${NS.state.dailyLimitMessages} |
+            📝 ${c.posts || 0}/${NS.state.dailyLimitPosts} |
+            🔁 ${c.reposts || 0}/${NS.state.dailyLimitReposts}
         `;
     };
 
     NS.renderProfiles = function () {
-        const el = document.getElementById('b11-profiles'); if (!el) return;
+        const el = document.getElementById('b11-profiles');
+        if (!el) return;
         if (NS.profiles.length === 0) {
             el.innerHTML = '<div style="color:#64748b;font-size:10px;">لا توجد حسابات محفوظة</div>';
             return;
@@ -1027,46 +1225,66 @@
     };
 
     NS.renderChart = function () {
-        const cv = document.getElementById('b11-chart'); if (!cv) return;
+        const cv = document.getElementById('b11-chart');
+        if (!cv) return;
         const ctx = cv.getContext('2d');
         const W = cv.width, H = cv.height;
         ctx.clearRect(0, 0, W, H);
         const last7 = NS.stats.history.slice(-7);
         if (last7.length === 0) {
-            ctx.fillStyle = '#64748b'; ctx.font = '12px sans-serif';
-            ctx.fillText('لا توجد بيانات', 10, H/2); return;
+            ctx.fillStyle = '#64748b';
+            ctx.font = '12px sans-serif';
+            ctx.fillText('لا توجد بيانات', 10, H / 2);
+            return;
         }
-        const max = Math.max(...last7.map(h => (h.likes||0)+(h.follows||0)), 10);
+        const max = Math.max(...last7.map(h => (h.likes || 0) + (h.follows || 0)), 10);
         const bw = W / last7.length;
         last7.forEach((h, i) => {
-            const lh = ((h.likes||0) / max) * (H - 30);
-            const fh = ((h.follows||0) / max) * (H - 30);
+            const lh = ((h.likes || 0) / max) * (H - 30);
+            const fh = ((h.follows || 0) / max) * (H - 30);
             const x = i * bw + 4;
             ctx.fillStyle = '#ef4444';
-            ctx.fillRect(x, H - 20 - lh, bw/2 - 2, lh);
+            ctx.fillRect(x, H - 20 - lh, bw / 2 - 2, lh);
             ctx.fillStyle = '#0085ff';
-            ctx.fillRect(x + bw/2, H - 20 - fh, bw/2 - 2, fh);
-            ctx.fillStyle = '#64748b'; ctx.font = '9px sans-serif';
+            ctx.fillRect(x + bw / 2, H - 20 - fh, bw / 2 - 2, fh);
+            ctx.fillStyle = '#64748b';
+            ctx.font = '9px sans-serif';
             ctx.fillText(h.d.slice(5), x, H - 6);
         });
-        ctx.fillStyle = '#ef4444'; ctx.fillRect(6, 6, 8, 8);
-        ctx.fillStyle = '#cbd5e1'; ctx.font = '9px sans-serif'; ctx.fillText('إعجاب', 18, 13);
-        ctx.fillStyle = '#0085ff'; ctx.fillRect(60, 6, 8, 8);
-        ctx.fillStyle = '#cbd5e1'; ctx.fillText('متابعة', 72, 13);
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(6, 6, 8, 8);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.font = '9px sans-serif';
+        ctx.fillText('إعجاب', 18, 13);
+        ctx.fillStyle = '#0085ff';
+        ctx.fillRect(60, 6, 8, 8);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillText('متابعة', 72, 13);
     };
 
     NS.renderABReport = function () {
-        const el = document.getElementById('b11-ab-report'); if (!el) return;
-        const entries = Object.entries(NS.state.replyPerf || {}).sort((a, b) => b[1].uses - a[1].uses).slice(0, 5);
-        if (entries.length === 0) { el.innerText = 'لا توجد بيانات بعد'; return; }
+        const el = document.getElementById('b11-ab-report');
+        if (!el) return;
+        const entries = Object.entries(NS.state.replyPerf || {})
+            .sort((a, b) => b[1].uses - a[1].uses).slice(0, 5);
+        if (entries.length === 0) {
+            el.innerText = 'لا توجد بيانات بعد';
+            return;
+        }
         el.innerHTML = entries.map(([t, d]) =>
             `<div>• "${NS.esc(t.slice(0, 20))}" — ${d.uses} استخدام</div>`
         ).join('');
     };
 
     NS.renderMLReport = function () {
-        const el = document.getElementById('b11-ml-report'); if (!el) return;
+        const el = document.getElementById('b11-ml-report');
+        if (!el) return;
         const best = NS.getBestHour();
-        el.innerText = best.count > 0 ? `⏰ أفضل ساعة: ${best.hour}:00 (${best.count} فعل)` : 'لا توجد بيانات';
+        el.innerText = best.count > 0
+            ? `⏰ أفضل ساعة: ${best.hour}:00 (${best.count} فعل)`
+            : 'لا توجد بيانات';
     };
+
+    console.log('📦 ui.js محمّل بنجاح');
+
 })();
