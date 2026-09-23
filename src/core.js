@@ -183,6 +183,7 @@
 
     // ═══ Default State ═══
     NS.defaultState = {
+                autoUpdateCheck: true,
         autoLike: false, autoFollow: false, autoUnfollow: false,
         autoReply: false, autoFollowBack: false, autoLikeCommenters: false,
         autoReplyNotifications: false, autoReplyMessages: false, autoRepost: false,
