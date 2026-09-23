@@ -1,15 +1,15 @@
-﻿// ==UserScript==
+// ==UserScript==
 // @name         بوت إدارة بلو سكاي v1.0.3 PRO
 // @name:en      Bluesky Bot Manager v1.0.3 PRO
-// @namespace    https://github.com/YOUR_USERNAME/bsky-bot
+// @namespace    https://github.com/HeroMax7411/bluesky-bot
 // @version      1.0.3
 // @description  بوت إدارة بلو سكاي الاحترافي - 30 ميزة متقدمة + دعم عربي كامل + تتبع أخطاء
 // @description:en Professional Bluesky bot - 30 advanced features + full Arabic support + error tracking
 // @author       Sayed Alhlwani
 // @homepageURL  https://sayedalhlwani.blogspot.com/
-// @supportURL   https://github.com/YOUR_USERNAME/bsky-bot/issues
-// @updateURL    https://raw.githubusercontent.com/YOUR_USERNAME/bsky-bot/main/bsky-bot.user.js
-// @downloadURL  https://raw.githubusercontent.com/YOUR_USERNAME/bsky-bot/main/bsky-bot.user.js
+// @supportURL   https://github.com/HeroMax7411/bluesky-bot/issues
+// @updateURL    https://raw.githubusercontent.com/HeroMax7411/bluesky-bot/main/bsky-bot.user.js
+// @downloadURL  https://raw.githubusercontent.com/HeroMax7411/bluesky-bot/main/bsky-bot.user.js
 // @match        https://bsky.app/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=bsky.app
 // @grant        GM_setClipboard
@@ -29,11 +29,8 @@
 (function () {
     'use strict';
 
-    /* ══════════════════════════════════════════════════
-       ⚙️ الإعدادات الأساسية - عدّلي YOUR_USERNAME هنا
-    ══════════════════════════════════════════════════ */
     const VERSION = '1.0.3';
-    const GITHUB_REPO = 'YOUR_USERNAME/bsky-bot';      // ← استبدلي هذا
+    const GITHUB_REPO = 'HeroMax7411/bluesky-bot';
     const GITHUB_ISSUES_URL = `https://github.com/${GITHUB_REPO}/issues/new`;
     const DEV_URL    = 'https://sayedalhlwani.blogspot.com/';
     const DONATE_URL = 'https://ko-fi.com/heromax7411';
@@ -44,7 +41,6 @@
     const ERROR_LOG_KEY = 'bsky_bot_error_log_v1';
     const PANEL_ID      = 'bsky-bot-v75';
 
-    /* ════════════════ أدوات مساعدة ════════════════ */
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
     const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -56,7 +52,7 @@
             GM_notification({ title, text, timeout: 4000 }); } catch(e){}
     }
 
-    /* ════════════════ 🐛 نظام تتبع الأخطاء ════════════════ */
+    /* ═══ 🐛 نظام تتبع الأخطاء ═══ */
     let errorLog = [];
     try {
         errorLog = JSON.parse(localStorage.getItem(ERROR_LOG_KEY) || '[]');
@@ -86,9 +82,7 @@
             errorLog.push(entry);
             saveErrorLog();
             console.error('🔴 خطأ مُسجّل:', entry);
-        } catch(e) {
-            console.error('فشل تسجيل الخطأ', e);
-        }
+        } catch(e) {}
     }
 
     window.addEventListener('error', (e) => {
@@ -104,7 +98,7 @@
         out += `**التاريخ**: ${new Date().toLocaleString('ar-EG')}\n`;
         out += `**المتصفح**: ${navigator.userAgent}\n`;
         out += `**الصفحة**: ${location.href}\n`;
-        out += `**الحساب**: ${(state && state.myHandle) || 'غير معروف'}\n`;
+        out += `**الحساب**: ${(typeof state !== 'undefined' && state && state.myHandle) || 'غير معروف'}\n`;
         out += `**الشاشة**: ${window.innerWidth}x${window.innerHeight}\n\n`;
         out += `---\n\n`;
         errors.forEach((e, i) => {
@@ -112,9 +106,7 @@
             out += `- **الوقت**: ${new Date(e.t).toLocaleString('ar-EG')}\n`;
             out += `- **الرسالة**: \`${e.message}\`\n`;
             out += `- **السياق**: ${e.context || 'غير محدد'}\n`;
-            if (e.stack) {
-                out += `- **Stack**:\n\`\`\`\n${e.stack}\n\`\`\`\n`;
-            }
+            if (e.stack) out += `- **Stack**:\n\`\`\`\n${e.stack}\n\`\`\`\n`;
             out += `\n`;
         });
         out += `---\n\n_تم إنشاء هذا التقرير تلقائياً من بوت بلو سكاي_`;
@@ -123,16 +115,10 @@
 
     function reportErrorToGitHub(errorEntry = null) {
         const errors = errorEntry ? [errorEntry] : errorLog.slice(-5);
-        if (errors.length === 0) {
-            alert('✅ لا توجد أخطاء مسجلة');
-            return;
-        }
-        const title = encodeURIComponent(
-            `[Auto-Report] خطأ في v${VERSION} - ${errors[0].message.slice(0, 60)}`
-        );
+        if (errors.length === 0) { alert('✅ لا توجد أخطاء مسجلة'); return; }
+        const title = encodeURIComponent(`[Auto-Report] خطأ في v${VERSION} - ${errors[0].message.slice(0, 60)}`);
         const body = encodeURIComponent(buildErrorReport(errors));
-        const url = `${GITHUB_ISSUES_URL}?title=${title}&body=${body}&labels=bug,auto-report`;
-        window.open(url, '_blank');
+        window.open(`${GITHUB_ISSUES_URL}?title=${title}&body=${body}&labels=bug,auto-report`, '_blank');
         notify('إرسال خطأ', 'تم فتح صفحة GitHub Issues');
     }
 
@@ -155,9 +141,7 @@
 
     function renderErrorTab() {
         const countEl = document.getElementById('b11-error-count');
-        if (countEl) {
-            countEl.innerHTML = `📊 عدد الأخطاء المسجلة: <b style="color:#ef4444">${errorLog.length}</b>`;
-        }
+        if (countEl) countEl.innerHTML = `📊 عدد الأخطاء المسجلة: <b style="color:#ef4444">${errorLog.length}</b>`;
         const listEl = document.getElementById('b11-error-list');
         if (!listEl) return;
         if (errorLog.length === 0) {
@@ -165,20 +149,15 @@
             return;
         }
         listEl.innerHTML = errorLog.slice(-20).reverse().map(e => `
-            <div style="background:#1a0f0f;padding:6px;border-radius:4px;margin:4px 0;
-                border-right:3px solid #ef4444;">
-                <div style="color:#fbbf24;font-weight:bold;font-size:10px;">
-                    ${new Date(e.t).toLocaleTimeString('ar-EG')} - v${esc(e.version)}
-                </div>
-                <div style="color:#fca5a5;margin:3px 0;word-break:break-all;">
-                    ${esc(e.message.slice(0, 120))}
-                </div>
+            <div style="background:#1a0f0f;padding:6px;border-radius:4px;margin:4px 0;border-right:3px solid #ef4444;">
+                <div style="color:#fbbf24;font-weight:bold;font-size:10px;">${new Date(e.t).toLocaleTimeString('ar-EG')} - v${esc(e.version)}</div>
+                <div style="color:#fca5a5;margin:3px 0;word-break:break-all;">${esc(e.message.slice(0, 120))}</div>
                 ${e.context ? `<div style="color:#94a3b8;font-size:9px;">${esc(e.context)}</div>` : ''}
             </div>
         `).join('');
     }
 
-    /* ════════════════ تشفير UTF-8 آمن ════════════════ */
+    /* ═══ تشفير UTF-8 ═══ */
     const XOR_KEY = 'bsky-v75-pro-key-2026';
     function strToU8(str) { return new TextEncoder().encode(str); }
     function u8ToStr(u8) { return new TextDecoder().decode(u8); }
@@ -216,7 +195,7 @@
         } catch (e) { return ''; }
     }
 
-    /* ════════════════ Keep-Alive ════════════════ */
+    /* ═══ Keep-Alive ═══ */
     let keepAliveWorker = null, keepAliveURL = null;
     function startKeepAlive() {
         try {
@@ -235,37 +214,30 @@
     }
     startKeepAlive();
 
-    /* ════════════════ الحالة الافتراضية ════════════════ */
+    /* ═══ الحالة الافتراضية ═══ */
     const defaultState = {
         autoLike: false, autoFollow: false, autoUnfollow: false,
         autoReply: false, autoFollowBack: false, autoLikeCommenters: false,
         autoReplyNotifications: false, autoReplyMessages: false, autoRepost: false,
-
         messageReplyText: "شكراً على رسالتك! سأرد عليك قريباً 🙏\nأهلاً بك! كيف يمكنني مساعدتك؟",
         customReplyText: "منشور رائع! ✨\nتفاعل جميل 🌟\nشكراً على المشاركة 🙏",
         replyTextOnly: "منشور رائع! ✨\nكلام جميل 🌟",
         replyWithImage: "صورة جميلة! 📸\nإبداع رائع! 🎨",
         repostKeywords: "",
-
         blacklistWords: "spam\ncrypto\nnft\nاعلانات",
         keywordFilter: "", useKeywordFilter: false,
         skipNoAvatar: false, onlyArabic: true, languageFilter: "ar",
-
         scheduleEnabled: false, scheduleStart: 9, scheduleEnd: 23,
-
         dailyLimitsEnabled: false,
         dailyLimitLikes: 1000, dailyLimitFollows: 500,
         dailyLimitReplies: 200, dailyLimitMessages: 100, dailyLimitPosts: 10,
         dailyLimitReposts: 50, dailyLimitFollows21: 50,
         dailyCounters: {},
-
         humanBreakEnabled: true, humanBreakEveryMin: 15, humanBreakEveryMax: 25,
         breakDurationMin: 3, breakDurationMax: 7, actionCounter: 0,
-
         scheduledPosts: [],
         blueskyAppPassword: '',
         encryptPasswords: true,
-
         useTemplateVars: false,
         calendarEnabled: false,
         calendar: { sun: "", mon: "", tue: "", wed: "", thu: "", fri: "", sat: "" },
@@ -279,7 +251,6 @@
         hashtagMap: "تصوير:photography,art\nبرمجة:javascript,coding\nرياضة:sports",
         worldEvents: false,
         mlPreferences: false, actionPerf: {},
-
         likeRatio: 100, followRatio: 100,
         dryRun: true, rateLimitPerMin: 8, paused: false,
         processedLikes: [], processedFollows: [], processedFollowBacks: [],
@@ -292,8 +263,7 @@
         collapsed: false,
     };
 
-    let state = Object.assign({}, defaultState,
-        JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'));
+    let state = Object.assign({}, defaultState, JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'));
 
     ['unfollowedUsers','processedLikes','processedFollows','processedFollowBacks',
      'processedCommentLikes','processedNotifReplies','processedMessages','processedReposts',
@@ -314,7 +284,6 @@
 
     let profiles = JSON.parse(localStorage.getItem(PROFILES_KEY) || '[]');
     let activeProfileIdx = 0;
-
     let loopGeneration = 0, activeLoopId = null;
     let lastMemoryReset = Date.now(), cyclesWithoutAction = 0;
 
@@ -327,7 +296,7 @@
         return true;
     }
 
-    /* ════════════════ حفظ ════════════════ */
+    /* ═══ حفظ ═══ */
     let saveScheduled = false;
     function saveSettings() {
         if (saveScheduled) return;
@@ -367,7 +336,6 @@
         if (state.mlPreferences) trackActionPerf(key);
     }
 
-    /* ════════════════ ML Preferences ════════════════ */
     function trackActionPerf(key) {
         const hour = new Date().getHours();
         if (!state.actionPerf[key]) state.actionPerf[key] = {};
@@ -386,7 +354,6 @@
         return { hour: best, count: bestCount };
     }
 
-    /* ════════════════ سجل ════════════════ */
     let logDirty = false, logRenderScheduled = false;
     function pushLog(type, detail) {
         state.activityLog.push({ t: Date.now(), type, detail });
@@ -404,7 +371,6 @@
         }
     }
 
-    /* ════════════════ Rate + Daily ════════════════ */
     let actionTimestamps = [];
     function rateCheck() {
         const now = Date.now();
@@ -416,11 +382,8 @@
     function getDailyCounters() {
         const today = todayStr();
         if (!state.dailyCounters || state.dailyCounters.date !== today) {
-            state.dailyCounters = {
-                date: today, likes: 0, follows: 0, replies: 0, messages: 0,
-                posts: 0, followBacks: 0, commentLikes: 0, notifReplies: 0,
-                reposts: 0, engagerFollows: 0
-            };
+            state.dailyCounters = { date: today, likes:0, follows:0, replies:0, messages:0,
+                posts:0, followBacks:0, commentLikes:0, notifReplies:0, reposts:0, engagerFollows:0 };
             forceSaveSettings();
         }
         return state.dailyCounters;
@@ -442,7 +405,6 @@
         forceSaveSettings();
     }
 
-    /* ════════════════ الجدولة ════════════════ */
     function isWithinSchedule() {
         if (!state.scheduleEnabled) return true;
         const h = new Date().getHours();
@@ -452,7 +414,6 @@
         return h >= s || h < e;
     }
 
-    /* ════════════════ اللغة ════════════════ */
     function isArabicText(text) {
         if (!text) return false;
         const a = (text.match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/g) || []).length;
@@ -467,7 +428,6 @@
         return true;
     }
 
-    /* ════════════════ فلاتر ════════════════ */
     function parseList(s) {
         return String(s || '').split(/[\n,،]/).map(w => w.trim().toLowerCase()).filter(Boolean);
     }
@@ -504,7 +464,6 @@
         return c.querySelectorAll('video').length > 0;
     }
 
-    /* ════════════════ Sentiment Analysis ════════════════ */
     const POSITIVE_WORDS = ['رائع','جميل','ممتاز','شكراً','شكرا','أحب','حب','سعيد','فرح','مبدع','إبداع','تحفة','Nice','great','love','amazing','awesome','happy','good'];
     const NEGATIVE_WORDS = ['سيء','حزين','غاضب','كره','مؤلم','فاشل','صعب','سيئة','terrible','sad','angry','hate','awful','bad'];
     function analyzeSentiment(text) {
@@ -518,7 +477,6 @@
         return 'neutral';
     }
 
-    /* ════════════════ Template Variables ════════════════ */
     function applyTemplateVars(template, ctx) {
         if (!state.useTemplateVars) return template;
         return template
@@ -529,7 +487,6 @@
             .replace(/\{date\}/g, todayStr());
     }
 
-    /* ════════════════ Auto Hashtags ════════════════ */
     function generateHashtags(text) {
         if (!state.autoHashtags) return '';
         const map = {};
@@ -545,7 +502,6 @@
         return Array.from(found).slice(0, 5).map(t => '#' + t).join(' ');
     }
 
-    /* ════════════════ World Events ════════════════ */
     function getWorldEvent() {
         if (!state.worldEvents) return '';
         const now = new Date();
@@ -562,7 +518,6 @@
         return events[`${m}-${d}`] || '';
     }
 
-    /* ════════════════ Weather ════════════════ */
     let cachedWeather = null;
     async function fetchWeather() {
         if (!state.weatherPosts) return null;
@@ -588,7 +543,6 @@
         return m[code] || 'معتدل 🌡️';
     }
 
-    /* ════════════════ تشفير كلمات المرور ════════════════ */
     function getDecryptedPass() {
         const p = state.blueskyAppPassword || '';
         return p.startsWith('ENC:') ? decrypt(p) : p;
@@ -598,7 +552,6 @@
         forceSaveSettings();
     }
 
-    /* ════════════════ أدوات DOM ════════════════ */
     function getPostKey(el) {
         const l = el?.querySelector('a[href*="/post/"]');
         return l ? l.getAttribute('href') : (el?.innerText || '').slice(0, 80);
@@ -647,7 +600,6 @@
         }
     }
 
-    /* ════════════════ كشف الأزرار ════════════════ */
     function isFollowButton(btn) {
         const tid = (btn.getAttribute('data-testid') || '').toLowerCase();
         if (tid === 'followbtn' || tid === 'follow-button') return true;
@@ -692,7 +644,6 @@
         return (l.includes('repost') && !l.includes('un')) || l.includes('إعادة نشر');
     }
 
-    /* ════════════════ جمع الأزرار ════════════════ */
     function collectAllFollowButtons() {
         const r = [], seen = new Set();
         for (const btn of document.querySelectorAll('button, [role="button"]')) {
@@ -763,7 +714,6 @@
         return r;
     }
 
-    /* ════════════════ كشف الإشعارات ════════════════ */
     function detectNotificationType(text) {
         const t = (text || '').toLowerCase();
         if (t.includes('followed you') || t.includes('تابعك') ||
@@ -776,7 +726,6 @@
         return null;
     }
 
-    /* ════════════════ تتبع من ألغى متابعتك ════════════════ */
     function trackCurrentFollowers() {
         if (!state.trackUnfollowers) return;
         if (!location.pathname.includes('/followers')) return;
@@ -797,7 +746,6 @@
         forceSaveSettings();
     }
 
-    /* ════════════════ متابعة المتفاعلين ════════════════ */
     function collectEngagers() {
         if (!state.followEngagers) return;
         if (!location.pathname.includes('/notifications')) return;
@@ -855,7 +803,6 @@
         return 0;
     }
 
-    /* ════════════════ رد المتابعة ════════════════ */
     async function doFollowBack(myGen) {
         if (!location.pathname.includes('/notifications')) return 0;
         if (!dailyCheck('followBacks')) { pushLog('limit', '⛔ حد المتابعة'); return 0; }
@@ -885,7 +832,6 @@
         return count;
     }
 
-    /* ════════════════ إعجاب المعلّقين ════════════════ */
     async function doLikeCommenters(myGen) {
         const onN = location.pathname.includes('/notifications');
         const onP = /\/profile\/[^/]+/.test(location.pathname);
@@ -916,7 +862,6 @@
         return count;
     }
 
-    /* ════════════════ إعجاب عام ════════════════ */
     async function doAutoLike(myGen) {
         if (Math.random() * 100 > state.likeRatio) return 0;
         if (!dailyCheck('likes')) { pushLog('limit', '⛔ حد الإعجاب'); return 0; }
@@ -946,7 +891,6 @@
         return count;
     }
 
-    /* ════════════════ متابعة عامة ════════════════ */
     async function doAutoFollow(myGen) {
         if (Math.random() * 100 > state.followRatio) return 0;
         if (!dailyCheck('follows')) { pushLog('limit', '⛔ حد المتابعة'); return 0; }
@@ -976,7 +920,6 @@
         return count;
     }
 
-    /* ════════════════ إعادة نشر ════════════════ */
     async function doAutoRepost(myGen) {
         if (!state.autoRepost) return 0;
         if (!dailyCheck('reposts')) { pushLog('limit', '⛔ حد إعادة النشر'); return 0; }
@@ -1005,7 +948,6 @@
         return count;
     }
 
-    /* ════════════════ إلغاء متابعة ════════════════ */
     async function waitForConfirmModal(maxWaitMs = 5000, myGen) {
         const start = Date.now();
         while (Date.now() - start < maxWaitMs) {
@@ -1021,32 +963,7 @@
         }
         return null;
     }
-    async function doAutoUnfollow(myGen) {
-        if (!/\/profile\/[^/]+\/following/.test(location.pathname)) return 0;
-        const btns = Array.from(document.querySelectorAll('button, [role="button"]'))
-            .filter(b => !isInsidePanel(b) && isAlreadyFollowing(b));
-        let n = 0;
-        for (const btn of btns.slice(0, 3)) {
-            if (myGen !== loopGeneration) return n;
-            if (!rateCheck()) break;
-            const c = btn.closest('[role="article"]') || btn.closest('div');
-            const h = getHandleFromContainer(c) || 'unknown';
-            if (state.dryRun) { pushLog('dry', `إلغاء: ${h}`); continue; }
-            fire(btn);
-            const confirm = await waitForConfirmModal(5000, myGen);
-            if (confirm) {
-                rateRecord(); fire(confirm);
-                bumpStat('unfollows');
-                state.unfollowedUsers.push(h);
-                pushLog('unfollow', `✅ ${h}`); n++;
-            }
-            if (!await sleepGen(rand(2500, 4500), myGen)) return n;
-        }
-        if (n) saveSettings();
-        return n;
-    }
 
-    /* ════════════════ إلغاء متابعة غير المتابعين ════════════════ */
     async function doCleanupNonFollowers(myGen) {
         if (!/\/profile\/[^/]+\/following/.test(location.pathname)) return 0;
         if (!state.autoUnfollow) return 0;
@@ -1080,7 +997,6 @@
         return n;
     }
 
-    /* ════════════════ الردود على الإشعارات ════════════════ */
     async function doReplyToNotifications(myGen) {
         if (!location.pathname.includes('/notifications')) return 0;
         if (!dailyCheck('notifReplies')) return 0;
@@ -1148,7 +1064,6 @@
         return count;
     }
 
-    /* ════════════════ الردود على الرسائل ════════════════ */
     async function doReplyToMessages(myGen) {
         if (!location.pathname.includes('/messages')) return 0;
         if (!dailyCheck('messages')) return 0;
@@ -1195,7 +1110,6 @@
         return count;
     }
 
-    /* ════════════════ الرد العام بقوالب ════════════════ */
     async function doAutoReply(myGen) {
         const btns = Array.from(document.querySelectorAll('[data-testid="replyBtn"], [data-testid*="reply" i]'))
             .filter(b => !isInsidePanel(b));
@@ -1245,27 +1159,19 @@
         return 0;
     }
 
-    /* ════════════════ الجلسة + uploadBlob + النشر ════════════════ */
     let sessionCache = { accessJwt: null, refreshJwt: null, did: null, expiresAt: 0 };
 
     async function getSession() {
         const pass = getDecryptedPass();
         if (!pass) throw new Error('لا توجد كلمة مرور');
-        if (sessionCache.accessJwt && Date.now() < sessionCache.expiresAt) {
-            return sessionCache;
-        }
+        if (sessionCache.accessJwt && Date.now() < sessionCache.expiresAt) return sessionCache;
         const loginRes = await fetch('https://bsky.social/xrpc/com.atproto.server.createSession', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ identifier: state.myHandle || 'sayed1993.bsky.social', password: pass })
         });
         if (!loginRes.ok) throw new Error('فشل تسجيل الدخول');
         const s = await loginRes.json();
-        sessionCache = {
-            accessJwt: s.accessJwt,
-            refreshJwt: s.refreshJwt,
-            did: s.did,
-            expiresAt: Date.now() + 100 * 60 * 1000
-        };
+        sessionCache = { accessJwt: s.accessJwt, refreshJwt: s.refreshJwt, did: s.did, expiresAt: Date.now() + 100 * 60 * 1000 };
         return sessionCache;
     }
 
@@ -1273,15 +1179,11 @@
         if (!sessionCache.refreshJwt) return getSession();
         try {
             const res = await fetch('https://bsky.social/xrpc/com.atproto.server.refreshSession', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${sessionCache.refreshJwt}` }
+                method: 'POST', headers: { 'Authorization': `Bearer ${sessionCache.refreshJwt}` }
             });
             if (!res.ok) throw new Error('refresh failed');
             const s = await res.json();
-            sessionCache = {
-                accessJwt: s.accessJwt, refreshJwt: s.refreshJwt, did: s.did,
-                expiresAt: Date.now() + 100 * 60 * 1000
-            };
+            sessionCache = { accessJwt: s.accessJwt, refreshJwt: s.refreshJwt, did: s.did, expiresAt: Date.now() + 100 * 60 * 1000 };
             return sessionCache;
         } catch (e) {
             sessionCache = { accessJwt: null, refreshJwt: null, did: null, expiresAt: 0 };
@@ -1296,16 +1198,14 @@
         const buf = await file.arrayBuffer();
         let res = await fetch('https://bsky.social/xrpc/com.atproto.repo.uploadBlob', {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${accessJwt}`,
-                       'Content-Type': file.type || 'application/octet-stream' },
+            headers: { 'Authorization': `Bearer ${accessJwt}`, 'Content-Type': file.type || 'application/octet-stream' },
             body: buf
         });
         if (res.status === 401) {
             const s = await refreshSession();
             res = await fetch('https://bsky.social/xrpc/com.atproto.repo.uploadBlob', {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${s.accessJwt}`,
-                           'Content-Type': file.type || 'application/octet-stream' },
+                headers: { 'Authorization': `Bearer ${s.accessJwt}`, 'Content-Type': file.type || 'application/octet-stream' },
                 body: buf
             });
         }
@@ -1340,8 +1240,7 @@
                     if (post.mediaType === 'video') {
                         embed = { $type: 'app.bsky.embed.video', video: blob };
                     } else {
-                        embed = { $type: 'app.bsky.embed.images',
-                            images: [{ image: blob, alt: post.mediaAlt || '' }] };
+                        embed = { $type: 'app.bsky.embed.images', images: [{ image: blob, alt: post.mediaAlt || '' }] };
                     }
                 } catch(e) { console.warn('media upload failed', e); }
             }
@@ -1407,7 +1306,6 @@
         });
     }
 
-    /* ════════════════ الحلقة الرئيسية ════════════════ */
     let handleDetectionAttempts = 0;
     async function botLoop() {
         const myGen = ++loopGeneration;
@@ -1521,13 +1419,11 @@
         }
     }
 
-    /* ════════════════ التمرير مع تخزين مؤقت ════════════════ */
     let scrollCache = { el: null, ts: 0, path: '' };
     function findScrollContainer() {
         const now = Date.now();
         if (scrollCache.el && now - scrollCache.ts < 5000 &&
-            scrollCache.path === location.pathname &&
-            document.contains(scrollCache.el) &&
+            scrollCache.path === location.pathname && document.contains(scrollCache.el) &&
             scrollCache.el.scrollHeight > scrollCache.el.clientHeight + 100) {
             return scrollCache.el;
         }
@@ -1563,7 +1459,6 @@
         await sleepGen(aggressive ? rand(2500, 4000) : rand(1500, 3000), myGen);
     }
 
-    /* ════════════════ كشف اسم المستخدم ════════════════ */
     function autoDetectMyHandle() {
         if (state.myHandle) return;
         const link = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]') ||
@@ -1579,7 +1474,6 @@
         }
     }
 
-    /* ════════════════ تصدير Google Sheets ════════════════ */
     function exportToSheets() {
         const rows = [['التاريخ','إعجابات','متابعات','إلغاء','ردود','رد متابعة','إعجاب معلق','رد إشعار','رد رسالة','منشورات','إعادة نشر']];
         stats.history.forEach(h => rows.push([h.d, h.likes||0, h.follows||0, h.unfollows||0,
@@ -1591,7 +1485,6 @@
         alert('✅ تم نسخ البيانات بصيغة TSV.\nالصقها مباشرة في Google Sheets (Ctrl+V)');
     }
 
-    /* ════════════════ Multi-Account ════════════════ */
     function saveCurrentAsProfile(name) {
         const profile = {
             name, handle: state.myHandle,
@@ -1627,7 +1520,6 @@
         renderProfiles();
     }
 
-    /* ════════════════ تصدير/استيراد ════════════════ */
     function exportSettings() {
         const data = { version: VERSION, exported: new Date().toISOString(),
             state: { ...state }, stats, profiles };
@@ -1654,7 +1546,6 @@
         r.readAsText(file);
     }
 
-    /* ════════════════ اللوحة الاحترافية ════════════════ */
     function createDashboard() {
         if (document.getElementById(PANEL_ID)) return;
 
@@ -1668,8 +1559,7 @@
             color: '#fff', fontSize: '26px', fontWeight: '900',
             display: 'none', alignItems: 'center', justifyContent: 'center',
             cursor: 'pointer', boxShadow: '0 4px 16px rgba(0,133,255,0.5)',
-            fontFamily: 'Arial, sans-serif', userSelect: 'none',
-            transition: 'transform 0.2s'
+            fontFamily: 'Arial, sans-serif', userSelect: 'none', transition: 'transform 0.2s'
         });
         mini.onmouseenter = () => mini.style.transform = 'scale(1.1)';
         mini.onmouseleave = () => mini.style.transform = 'scale(1)';
@@ -1767,9 +1657,7 @@
             <div class="b11-section">
                 <div class="b11-section-title" style="color:#3b82f6;">🔑 كلمة مرور التطبيق</div>
                 <input type="password" id="b11-app-pass" value="${esc(state.encryptPasswords ? '' : state.blueskyAppPassword)}" placeholder="xxxx-xxxx-xxxx-xxxx">
-                <div style="font-size:9px;color:#94a3b8;">
-                    ${state.blueskyAppPassword ? '✅ محفوظة (مشفرة)' : 'أدخلها مرة واحدة'}
-                </div>
+                <div style="font-size:9px;color:#94a3b8;">${state.blueskyAppPassword ? '✅ محفوظة (مشفرة)' : 'أدخلها مرة واحدة'}</div>
                 <label style="margin-top:6px;"><input type="checkbox" id="b11-encrypt" ${state.encryptPasswords?'checked':''}> 🔐 تشفير كلمة المرور</label>
             </div>
             <div class="b11-section">
@@ -1977,8 +1865,7 @@
                     يتم تسجيل كل خطأ تلقائياً (آخر 50 خطأ)
                 </div>
                 <div id="b11-error-count" style="font-size:11px;color:#fbbf24;text-align:center;margin:6px 0;"></div>
-                <button id="b11-report-error" class="b11-btn" 
-                    style="background:linear-gradient(135deg,#ef4444,#dc2626);">
+                <button id="b11-report-error" class="b11-btn" style="background:linear-gradient(135deg,#ef4444,#dc2626);">
                     📤 إرسال آخر 5 أخطاء إلى GitHub
                 </button>
                 <div class="b11-btn-row">
@@ -1988,9 +1875,7 @@
             </div>
             <div class="b11-section">
                 <div class="b11-section-title">📋 آخر الأخطاء:</div>
-                <div id="b11-error-list" style="font-size:10px;font-family:monospace;
-                    background:#0a121e;padding:8px;border-radius:6px;max-height:280px;overflow-y:auto;">
-                </div>
+                <div id="b11-error-list" style="font-size:10px;font-family:monospace;background:#0a121e;padding:8px;border-radius:6px;max-height:280px;overflow-y:auto;"></div>
             </div>
         </div>
 
@@ -2007,68 +1892,32 @@
 
         const css = document.createElement('style');
         css.textContent = `
-            #${PANEL_ID}{
-                position:fixed;top:70px;right:20px;z-index:99999;
-                width:${state.panelSize.w}px;height:${state.panelSize.h}px;
-                background:linear-gradient(160deg,#0d1420 0%,#161e27 100%);
-                color:#e2e8f0;border-radius:14px;border:1px solid #1e293b;
-                box-shadow:0 12px 40px rgba(0,0,0,0.6),0 0 0 1px rgba(0,133,255,0.1);
-                font-family:-apple-system,'Segoe UI',sans-serif;font-size:12px;
-                display:${state.collapsed ? 'none' : 'flex'};flex-direction:column;overflow:hidden;
-            }
-            #b11-header{padding:12px 14px;background:linear-gradient(135deg,#1e293b,#0f172a);
-                display:flex;justify-content:space-between;align-items:center;cursor:move;
-                border-bottom:1px solid #1e293b;}
+            #${PANEL_ID}{position:fixed;top:70px;right:20px;z-index:99999;width:${state.panelSize.w}px;height:${state.panelSize.h}px;background:linear-gradient(160deg,#0d1420 0%,#161e27 100%);color:#e2e8f0;border-radius:14px;border:1px solid #1e293b;box-shadow:0 12px 40px rgba(0,0,0,0.6),0 0 0 1px rgba(0,133,255,0.1);font-family:-apple-system,'Segoe UI',sans-serif;font-size:12px;display:${state.collapsed ? 'none' : 'flex'};flex-direction:column;overflow:hidden;}
+            #b11-header{padding:12px 14px;background:linear-gradient(135deg,#1e293b,#0f172a);display:flex;justify-content:space-between;align-items:center;cursor:move;border-bottom:1px solid #1e293b;}
             .b11-brand{display:flex;align-items:center;gap:10px;}
-            .b11-logo{width:34px;height:34px;border-radius:9px;
-                background:linear-gradient(135deg,#0085ff,#0066cc);color:#fff;
-                display:flex;align-items:center;justify-content:center;
-                font-weight:900;font-size:19px;box-shadow:0 4px 12px rgba(0,133,255,0.4);}
+            .b11-logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#0085ff,#0066cc);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:19px;box-shadow:0 4px 12px rgba(0,133,255,0.4);}
             .b11-title{font-weight:700;font-size:13px;color:#fff;}
             .b11-ver{font-size:9px;color:#60a5fa;font-weight:600;}
             .b11-controls{display:flex;gap:4px;}
-            .b11-icon{width:26px;height:26px;border:none;border-radius:6px;
-                background:rgba(255,255,255,0.06);color:#cbd5e1;cursor:pointer;
-                font-size:12px;display:flex;align-items:center;justify-content:center;
-                transition:all 0.15s;}
+            .b11-icon{width:26px;height:26px;border:none;border-radius:6px;background:rgba(255,255,255,0.06);color:#cbd5e1;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;transition:all 0.15s;}
             .b11-icon:hover{background:rgba(255,255,255,0.15);color:#fff;}
             #b11-tabs{display:flex;gap:2px;padding:6px;background:#0a121e;overflow-x:auto;flex-shrink:0;}
-            .b11-tab{flex:1;min-width:44px;background:transparent;color:#64748b;border:none;
-                padding:6px 2px;border-radius:6px;font-size:9px;cursor:pointer;
-                font-weight:600;transition:all 0.15s;white-space:nowrap;}
+            .b11-tab{flex:1;min-width:44px;background:transparent;color:#64748b;border:none;padding:6px 2px;border-radius:6px;font-size:9px;cursor:pointer;font-weight:600;transition:all 0.15s;white-space:nowrap;}
             .b11-tab:hover{color:#94a3b8;background:rgba(255,255,255,0.03);}
-            .b11-tab.active{background:linear-gradient(135deg,#0085ff,#0066cc);color:#fff;
-                box-shadow:0 2px 8px rgba(0,133,255,0.4);}
+            .b11-tab.active{background:linear-gradient(135deg,#0085ff,#0066cc);color:#fff;box-shadow:0 2px 8px rgba(0,133,255,0.4);}
             #b11-body{flex:1;padding:12px;overflow-y:auto;overflow-x:hidden;}
             #b11-body::-webkit-scrollbar{width:6px;}
             #b11-body::-webkit-scrollbar-thumb{background:#334155;border-radius:3px;}
             #b11-body::-webkit-scrollbar-track{background:transparent;}
-            .b11-section{background:rgba(15,23,42,0.5);border:1px solid #1e293b;
-                border-radius:8px;padding:8px 10px;margin:6px 0;}
-            .b11-section-title{font-weight:700;font-size:11px;margin-bottom:6px;
-                color:#cbd5e1;display:flex;align-items:center;gap:4px;}
-            #${PANEL_ID} label{display:flex;align-items:center;gap:6px;
-                font-size:11px;margin:4px 0;cursor:pointer;color:#cbd5e1;}
+            .b11-section{background:rgba(15,23,42,0.5);border:1px solid #1e293b;border-radius:8px;padding:8px 10px;margin:6px 0;}
+            .b11-section-title{font-weight:700;font-size:11px;margin-bottom:6px;color:#cbd5e1;display:flex;align-items:center;gap:4px;}
+            #${PANEL_ID} label{display:flex;align-items:center;gap:6px;font-size:11px;margin:4px 0;cursor:pointer;color:#cbd5e1;}
             #${PANEL_ID} input[type="checkbox"]{accent-color:#0085ff;}
-            #${PANEL_ID} input[type="text"],
-            #${PANEL_ID} input[type="number"],
-            #${PANEL_ID} input[type="password"],
-            #${PANEL_ID} input[type="datetime-local"],
-            #${PANEL_ID} input[type="file"]{
-                width:100%;font-size:11px;padding:6px 8px;margin:3px 0;
-                background:#0a121e;color:#e2e8f0;border:1px solid #1e293b;
-                border-radius:6px;box-sizing:border-box;transition:border 0.15s;}
-            #${PANEL_ID} input:focus{outline:none;border-color:#0085ff;
-                box-shadow:0 0 0 2px rgba(0,133,255,0.15);}
-            #${PANEL_ID} .b11-textarea{width:100%;font-size:11px;padding:6px 8px;
-                margin:3px 0;background:#0a121e;color:#e2e8f0;border:1px solid #1e293b;
-                border-radius:6px;box-sizing:border-box;font-family:'Consolas',monospace;
-                resize:vertical;transition:border 0.15s;}
-            #${PANEL_ID} .b11-textarea:focus{outline:none;border-color:#0085ff;
-                box-shadow:0 0 0 2px rgba(0,133,255,0.15);}
-            .b11-btn{width:100%;padding:8px;border:none;border-radius:6px;
-                font-weight:700;font-size:11px;cursor:pointer;margin:3px 0;
-                color:#fff;transition:all 0.15s;font-family:inherit;}
+            #${PANEL_ID} input[type="text"],#${PANEL_ID} input[type="number"],#${PANEL_ID} input[type="password"],#${PANEL_ID} input[type="datetime-local"],#${PANEL_ID} input[type="file"]{width:100%;font-size:11px;padding:6px 8px;margin:3px 0;background:#0a121e;color:#e2e8f0;border:1px solid #1e293b;border-radius:6px;box-sizing:border-box;transition:border 0.15s;}
+            #${PANEL_ID} input:focus{outline:none;border-color:#0085ff;box-shadow:0 0 0 2px rgba(0,133,255,0.15);}
+            #${PANEL_ID} .b11-textarea{width:100%;font-size:11px;padding:6px 8px;margin:3px 0;background:#0a121e;color:#e2e8f0;border:1px solid #1e293b;border-radius:6px;box-sizing:border-box;font-family:'Consolas',monospace;resize:vertical;transition:border 0.15s;}
+            #${PANEL_ID} .b11-textarea:focus{outline:none;border-color:#0085ff;box-shadow:0 0 0 2px rgba(0,133,255,0.15);}
+            .b11-btn{width:100%;padding:8px;border:none;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;margin:3px 0;color:#fff;transition:all 0.15s;font-family:inherit;}
             .b11-btn:hover{transform:translateY(-1px);filter:brightness(1.1);}
             .b11-btn:active{transform:translateY(0);}
             .b11-btn.green{background:linear-gradient(135deg,#22c55e,#16a34a);}
@@ -2077,26 +1926,14 @@
             .b11-btn.purple{background:linear-gradient(135deg,#6366f1,#4f46e5);}
             .b11-btn-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:4px 0;}
             .b11-btn-row .b11-btn{margin:0;}
-            .b11-status{display:flex;gap:8px;padding:8px;background:linear-gradient(135deg,#0a121e,#0f172a);
-                border:1px solid #1e293b;border-radius:8px;font-size:10px;margin-bottom:6px;
-                justify-content:space-around;}
-            .b11-last{background:#0a121e;padding:8px;border-radius:6px;font-size:10px;
-                margin-bottom:6px;border:1px solid #1e293b;}
-            #b11-log-box{background:#0a121e;padding:8px;border-radius:6px;font-size:10px;
-                color:#cbd5e1;max-height:380px;overflow-y:auto;margin:4px 0;
-                font-family:'Consolas',monospace;line-height:1.6;}
+            .b11-status{display:flex;gap:8px;padding:8px;background:linear-gradient(135deg,#0a121e,#0f172a);border:1px solid #1e293b;border-radius:8px;font-size:10px;margin-bottom:6px;justify-content:space-around;}
+            .b11-last{background:#0a121e;padding:8px;border-radius:6px;font-size:10px;margin-bottom:6px;border:1px solid #1e293b;}
+            #b11-log-box{background:#0a121e;padding:8px;border-radius:6px;font-size:10px;color:#cbd5e1;max-height:380px;overflow-y:auto;margin:4px 0;font-family:'Consolas',monospace;line-height:1.6;}
             .b11-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px;}
-            .b11-stats div{background:linear-gradient(135deg,#0a121e,#0f172a);
-                padding:8px 4px;border-radius:6px;text-align:center;font-size:11px;
-                border:1px solid #1e293b;font-weight:600;}
-            #b11-resize{position:absolute;bottom:0;left:0;width:20px;height:20px;
-                cursor:nwse-resize;
-                background:linear-gradient(135deg,transparent 50%,#0085ff 50%,#0085ff 60%,transparent 60%,transparent 70%,#0085ff 70%,#0085ff 80%,transparent 80%);
-                opacity:0.6;}
+            .b11-stats div{background:linear-gradient(135deg,#0a121e,#0f172a);padding:8px 4px;border-radius:6px;text-align:center;font-size:11px;border:1px solid #1e293b;font-weight:600;}
+            #b11-resize{position:absolute;bottom:0;left:0;width:20px;height:20px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 50%,#0085ff 50%,#0085ff 60%,transparent 60%,transparent 70%,#0085ff 70%,#0085ff 80%,transparent 80%);opacity:0.6;}
             #b11-resize:hover{opacity:1;}
-            #b11-footer{padding:6px 12px;font-size:10px;color:#10b981;
-                background:#0a121e;border-top:1px solid #1e293b;text-align:center;
-                border-bottom-left-radius:14px;border-bottom-right-radius:14px;}
+            #b11-footer{padding:6px 12px;font-size:10px;color:#10b981;background:#0a121e;border-top:1px solid #1e293b;text-align:center;border-bottom-left-radius:14px;border-bottom-right-radius:14px;}
         `;
         document.head.appendChild(css);
 
@@ -2117,10 +1954,7 @@
             const el = document.getElementById(id);
             if (!el) return;
             const ev = isCheck ? 'onchange' : 'oninput';
-            el[ev] = e => {
-                state[key] = isCheck ? e.target.checked : e.target.value;
-                saveSettings();
-            };
+            el[ev] = e => { state[key] = isCheck ? e.target.checked : e.target.value; saveSettings(); };
         };
         const bn = (id, key, min = 0, max = 100000) => {
             const el = document.getElementById(id);
@@ -2167,17 +2001,11 @@
         bind('b11-track-unf','trackUnfollowers',true);
 
         const passEl = document.getElementById('b11-app-pass');
-        if (passEl) passEl.onchange = e => {
-            setEncryptedPass(e.target.value);
-            e.target.value = '';
-        };
+        if (passEl) passEl.onchange = e => { setEncryptedPass(e.target.value); e.target.value = ''; };
 
         ['sun','mon','tue','wed','thu','fri','sat'].forEach(d => {
             const el = document.getElementById(`b11-cal-${d}`);
-            if (el) el.oninput = e => {
-                state.calendar[d] = e.target.value;
-                saveSettings();
-            };
+            if (el) el.oninput = e => { state.calendar[d] = e.target.value; saveSettings(); };
         });
 
         bn('b11-rate','rateLimitPerMin',1,30);
@@ -2245,15 +2073,9 @@
             notify('شكراً 💙', 'شكراً لدعمك!');
         };
 
-        document.getElementById('b11-dev').onclick = () => {
-            window.open(DEV_URL, '_blank');
-        };
+        document.getElementById('b11-dev').onclick = () => { window.open(DEV_URL, '_blank'); };
+        document.getElementById('b11-github').onclick = () => { window.open(`https://github.com/${GITHUB_REPO}`, '_blank'); };
 
-        document.getElementById('b11-github').onclick = () => {
-            window.open(`https://github.com/${GITHUB_REPO}`, '_blank');
-        };
-
-        // 🐛 أزرار تبويب الأخطاء
         document.getElementById('b11-report-error').onclick = () => reportErrorToGitHub();
         document.getElementById('b11-export-errors').onclick = exportErrorLog;
         document.getElementById('b11-clear-errors').onclick = clearErrorLog;
@@ -2400,7 +2222,6 @@
         renderABReport(); renderMLReport(); renderErrorTab();
     }
 
-    /* ════════════════ واجهة ════════════════ */
     function updateStatsUI() {
         const s = (id, v) => { const e = document.getElementById(id); if (e) e.innerText = v; };
         s('st-likes', stats.likes); s('st-follows', stats.follows);
@@ -2450,8 +2271,7 @@
             const d = new Date(p.time);
             const st = p.posted ? '✅' : '⏳';
             const media = p.mediaBlob ? ' 📎' : '';
-            return `<div style="background:#0a121e;padding:5px 8px;border-radius:5px;margin:3px 0;
-                display:flex;justify-content:space-between;align-items:center;font-size:10px;">
+            return `<div style="background:#0a121e;padding:5px 8px;border-radius:5px;margin:3px 0;display:flex;justify-content:space-between;align-items:center;font-size:10px;">
                 <span>${st}${media} ${esc(p.text.slice(0, 25))}...</span>
                 <span style="color:#94a3b8;font-size:9px;">${d.toLocaleString('ar-EG')}</span>
             </div>`;
@@ -2476,14 +2296,11 @@
             return;
         }
         el.innerHTML = profiles.map((p, i) => `
-            <div style="display:flex;justify-content:space-between;align-items:center;
-                background:#0a121e;padding:5px 8px;border-radius:5px;margin:3px 0;font-size:11px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;background:#0a121e;padding:5px 8px;border-radius:5px;margin:3px 0;font-size:11px;">
                 <span>${i === activeProfileIdx ? '🟢' : '⚪'} ${esc(p.name)}</span>
                 <div>
-                    <button data-sw="${i}" style="background:#22c55e;border:none;color:#fff;
-                        padding:2px 6px;border-radius:3px;cursor:pointer;font-size:9px;margin-right:3px;">تبديل</button>
-                    <button data-del="${i}" style="background:#ef4444;border:none;color:#fff;
-                        padding:2px 6px;border-radius:3px;cursor:pointer;font-size:9px;">حذف</button>
+                    <button data-sw="${i}" style="background:#22c55e;border:none;color:#fff;padding:2px 6px;border-radius:3px;cursor:pointer;font-size:9px;margin-right:3px;">تبديل</button>
+                    <button data-del="${i}" style="background:#ef4444;border:none;color:#fff;padding:2px 6px;border-radius:3px;cursor:pointer;font-size:9px;">حذف</button>
                 </div>
             </div>
         `).join('');
@@ -2536,7 +2353,6 @@
         if (el) el.innerText = msg + ' • Shift+B';
     }
 
-    /* ════════════════ بدء التشغيل ════════════════ */
     setInterval(() => {
         const l = document.getElementById('b11-dbg-loop');
         if (l) l.innerHTML = `🔄<b style="color:#10b981">${loopGeneration}</b>`;
