@@ -24,6 +24,7 @@
 // @require      https://raw.githubusercontent.com/HeroMax7411/bluesky-bot/main/src/dom.js
 // @require      https://raw.githubusercontent.com/HeroMax7411/bluesky-bot/main/src/actions.js
 // @require      https://raw.githubusercontent.com/HeroMax7411/bluesky-bot/main/src/ui.js
+// @require      https://raw.githubusercontent.com/HeroMax7411/bluesky-bot/main/src/update.js
 // @run-at       document-end
 // @noframes
 // ==/UserScript==
@@ -45,6 +46,8 @@
     setTimeout(() => {
         NS.createDashboard();
         NS.botLoop();
+        NS.autoCheckUpdate();  
+
     }, 2000);
 
     window.addEventListener('beforeunload', () => {
