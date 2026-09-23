@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         بوت إدارة بلو سكاي v1.0.3 PRO
-// @name:en      Bluesky Bot Manager v1.0.3 PRO
+// @name         بوت إدارة بلو سكاي v1.0.4 PRO
+// @name:en      Bluesky Bot Manager v1.0.4 PRO
 // @namespace    https://github.com/HeroMax7411/bluesky-bot
-// @version      1.0.3
-// @description  بوت إدارة بلو سكاي الاحترافي - 30 ميزة متقدمة + دعم عربي كامل + تتبع أخطاء
-// @description:en Professional Bluesky bot - 30 advanced features + full Arabic support + error tracking
+// @version      1.0.4
+// @description  بوت إدارة بلو سكاي الاحترافي - ظهور تلقائي للوحة + 30 ميزة
+// @description:en Professional Bluesky bot - auto-show panel + 30 features
 // @author       Sayed Alhlwani
 // @homepageURL  https://sayedalhlwani.blogspot.com/
 // @supportURL   https://github.com/HeroMax7411/bluesky-bot/issues
@@ -29,7 +29,7 @@
 (function () {
     'use strict';
 
-    const VERSION = '1.0.3';
+    const VERSION = '1.0.4';
     const GITHUB_REPO = 'HeroMax7411/bluesky-bot';
     const GITHUB_ISSUES_URL = `https://github.com/${GITHUB_REPO}/issues/new`;
     const DEV_URL    = 'https://sayedalhlwani.blogspot.com/';
@@ -260,10 +260,15 @@
         resetMemoryEveryMin: 60, stuckThreshold: 3, fastCycleMs: 4000,
         lastClickResult: '', myHandle: '',
         panelSize: { w: 400, h: 600 },
-        collapsed: false,
+        collapsed: false,  // ✅ اللوحة ظاهرة افتراضياً
     };
 
-    let state = Object.assign({}, defaultState, JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'));
+    // ✅ إصلاح: إذا لم تكن هناك إعدادات محفوظة → اللوحة تظهر
+    const savedRaw = localStorage.getItem(STORAGE_KEY);
+    let state = Object.assign({}, defaultState, JSON.parse(savedRaw || '{}'));
+    if (savedRaw === null) {
+        state.collapsed = false;  // أول تثبيت → ظاهرة
+    }
 
     ['unfollowedUsers','processedLikes','processedFollows','processedFollowBacks',
      'processedCommentLikes','processedNotifReplies','processedMessages','processedReposts',
@@ -1549,6 +1554,12 @@
     function createDashboard() {
         if (document.getElementById(PANEL_ID)) return;
 
+        // ✅ إنشاء اللوحة أولاً
+        const panel = document.createElement('div');
+        panel.id = PANEL_ID;
+        panel.style.display = state.collapsed ? 'none' : 'flex';
+
+        // ✅ الزر المصغّر B
         const mini = document.createElement('div');
         mini.id = PANEL_ID + '-mini';
         mini.innerHTML = 'B';
@@ -1557,7 +1568,8 @@
             width: '50px', height: '50px', borderRadius: '12px',
             background: 'linear-gradient(135deg, #0085ff, #0066cc)',
             color: '#fff', fontSize: '26px', fontWeight: '900',
-            display: 'none', alignItems: 'center', justifyContent: 'center',
+            display: state.collapsed ? 'flex' : 'none',  // ✅ الإصلاح الرئيسي
+            alignItems: 'center', justifyContent: 'center',
             cursor: 'pointer', boxShadow: '0 4px 16px rgba(0,133,255,0.5)',
             fontFamily: 'Arial, sans-serif', userSelect: 'none', transition: 'transform 0.2s'
         });
@@ -1571,8 +1583,6 @@
         };
         document.body.appendChild(mini);
 
-        const panel = document.createElement('div');
-        panel.id = PANEL_ID;
         panel.innerHTML = `
         <div id="b11-header">
             <div class="b11-brand">
@@ -1890,9 +1900,10 @@
         `;
         document.body.appendChild(panel);
 
+        // ✅ CSS
         const css = document.createElement('style');
         css.textContent = `
-            #${PANEL_ID}{position:fixed;top:70px;right:20px;z-index:99999;width:${state.panelSize.w}px;height:${state.panelSize.h}px;background:linear-gradient(160deg,#0d1420 0%,#161e27 100%);color:#e2e8f0;border-radius:14px;border:1px solid #1e293b;box-shadow:0 12px 40px rgba(0,0,0,0.6),0 0 0 1px rgba(0,133,255,0.1);font-family:-apple-system,'Segoe UI',sans-serif;font-size:12px;display:${state.collapsed ? 'none' : 'flex'};flex-direction:column;overflow:hidden;}
+            #${PANEL_ID}{position:fixed;top:70px;right:20px;z-index:99999;width:${state.panelSize.w}px;height:${state.panelSize.h}px;background:linear-gradient(160deg,#0d1420 0%,#161e27 100%);color:#e2e8f0;border-radius:14px;border:1px solid #1e293b;box-shadow:0 12px 40px rgba(0,0,0,0.6),0 0 0 1px rgba(0,133,255,0.1);font-family:-apple-system,'Segoe UI',sans-serif;font-size:12px;flex-direction:column;overflow:hidden;}
             #b11-header{padding:12px 14px;background:linear-gradient(135deg,#1e293b,#0f172a);display:flex;justify-content:space-between;align-items:center;cursor:move;border-bottom:1px solid #1e293b;}
             .b11-brand{display:flex;align-items:center;gap:10px;}
             .b11-logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#0085ff,#0066cc);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:19px;box-shadow:0 4px 12px rgba(0,133,255,0.4);}
