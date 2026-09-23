@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════
-   src/ui.js — واجهة المستخدم والحلقة الرئيسية (مكتمل)
+   src/ui.js — واجهة المستخدم والحلقة الرئيسية
    يحتوي على: اللوحة، الحلقة، دوال العرض، التصدير
    ═══════════════════════════════════════════════════════════ */
 
@@ -32,6 +32,7 @@
     NS.findScrollContainer = function () {
         const now = Date.now();
 
+        // استخدام الكاش (< 5 ثوان، نفس الصفحة)
         if (NS.scrollCache.el && now - NS.scrollCache.ts < 5000 &&
             NS.scrollCache.path === location.pathname &&
             document.contains(NS.scrollCache.el) &&
@@ -80,7 +81,7 @@
         if (e >= NS.state.resetMemoryEveryMin) {
             ['processedLikes','processedFollows','processedFollowBacks','processedCommentLikes',
              'processedNotifReplies','processedMessages','processedReposts','processedPosts']
-                .forEach(k => NS.state[k] = (NS.state[k] || []).slice(-200));
+                .forEach(k => NS.state[k] = NS.state[k].slice(-200));
             NS.lastMemoryReset = Date.now();
             NS.saveSettings();
         }
@@ -92,6 +93,7 @@
         NS.activeLoopId = myGen;
         NS.cyclesWithoutAction = 0;
 
+        // كشف اسم المستخدم (بحد أقصى 5 محاولات)
         if (!NS.state.myHandle && NS.handleDetectionAttempts < 5) {
             NS.autoDetectMyHandle();
             NS.handleDetectionAttempts++;
@@ -102,6 +104,7 @@
         while (NS.activeLoopId === myGen && myGen === NS.loopGeneration) {
             let actionCount = 0;
             try {
+                // فحص الجدولة الزمنية
                 if (NS.state.scheduleEnabled && !NS.isWithinSchedule()) {
                     NS.setFooter('⏰ خارج الجدولة');
                     await NS.sleepGen(60000, myGen);
@@ -119,10 +122,12 @@
                     if (onF) NS.trackCurrentFollowers();
                     if (onN) NS.collectEngagers();
 
+                    // الرسائل أولاً
                     if (NS.state.autoReplyMessages && onM)
                         actionCount += await NS.doReplyToMessages(myGen);
                     if (myGen !== NS.loopGeneration) break;
 
+                    // الإشعارات
                     if (NS.state.autoFollowBack && onN)
                         actionCount += await NS.doFollowBack(myGen);
                     if (myGen !== NS.loopGeneration) break;
@@ -135,6 +140,7 @@
                         actionCount += await NS.doLikeCommenters(myGen);
                     if (myGen !== NS.loopGeneration) break;
 
+                    // العام
                     if (NS.state.autoLike)
                         actionCount += await NS.doAutoLike(myGen);
                     if (myGen !== NS.loopGeneration) break;
@@ -161,6 +167,7 @@
 
                     NS.maybeResetMemory();
 
+                    // تعامل مع عدم وجود نشاط
                     if (actionCount === 0) {
                         NS.cyclesWithoutAction++;
                         NS.setFooter(`⚠️ لا جديد (${NS.cyclesWithoutAction}/${NS.state.stuckThreshold})`);
@@ -174,6 +181,7 @@
                         NS.cyclesWithoutAction = 0;
                         await NS.autoScrollDown(false, myGen);
 
+                        // الاستراحة البشرية
                         if (NS.state.humanBreakEnabled) {
                             NS.state.actionCounter = (NS.state.actionCounter || 0) + actionCount;
                             const threshold = NS.rand(NS.state.humanBreakEveryMin, NS.state.humanBreakEveryMax);
@@ -213,7 +221,7 @@
     /* ════════════════ دوال التصدير ════════════════ */
     NS.exportToSheets = function () {
         const rows = [['التاريخ','إعجابات','متابعات','إلغاء','ردود','رد متابعة','إعجاب معلق','رد إشعار','رد رسالة','منشورات','إعادة نشر']];
-        (NS.stats.history || []).forEach(h => rows.push([
+        NS.stats.history.forEach(h => rows.push([
             h.d, h.likes || 0, h.follows || 0, h.unfollows || 0,
             h.replies || 0, h.followBacks || 0, h.commentLikes || 0,
             h.notifReplies || 0, h.messageReplies || 0, h.posts || 0, h.reposts || 0
@@ -258,134 +266,1025 @@
         r.readAsText(file);
     };
 
+    NS.saveCurrentAsProfile = function (name) {
+        const profile = {
+            name,
+            handle: NS.state.myHandle,
+            appPassword: NS.state.blueskyAppPassword,
+            settings: JSON.parse(JSON.stringify(NS.state))
+        };
+        delete profile.settings.processedLikes;
+        delete profile.settings.activityLog;
+        NS.profiles.push(profile);
+        NS.saveProfiles();
+        alert(`✅ حُفظ الحساب: ${name}`);
+    };
+
+    NS.switchProfile = function (idx) {
+        if (!NS.profiles[idx]) return;
+        const current = NS.profiles[NS.activeProfileIdx];
+        if (current) current.settings = JSON.parse(JSON.stringify(NS.state));
+
+        const p = NS.profiles[idx];
+        NS.state = Object.assign({}, NS.defaultState, p.settings);
+        window.__bskyState = NS.state;
+
+        ['unfollowedUsers','processedLikes','processedFollows','processedFollowBacks',
+         'processedCommentLikes','processedNotifReplies','processedMessages','processedReposts',
+         'processedPosts','activityLog','scheduledPosts','knownFollowers','engagerQueue']
+            .forEach(k => { if (!Array.isArray(NS.state[k])) NS.state[k] = []; });
+
+        NS.activeProfileIdx = idx;
+        NS.forceSaveSettings();
+        NS.saveProfiles();
+        location.reload();
+    };
+
+    NS.deleteProfile = function (idx) {
+        if (!confirm('حذف الحساب؟')) return;
+        NS.profiles.splice(idx, 1);
+        if (NS.activeProfileIdx >= NS.profiles.length) NS.activeProfileIdx = 0;
+        NS.saveProfiles();
+        NS.renderProfiles();
+    };
+
     /* ════════════════ إنشاء اللوحة ════════════════ */
     NS.createDashboard = function () {
         if (document.getElementById(NS.PANEL_ID)) return;
 
         const s = NS.state;
+        const esc = NS.esc;
 
-        // 1. الزر المصغّر (B)
+        // ✅ الزر المصغّر B
         const mini = document.createElement('div');
         mini.id = NS.PANEL_ID + '-mini';
         mini.innerHTML = 'B';
         Object.assign(mini.style, {
             position: 'fixed', bottom: '20px', right: '20px', zIndex: '99998',
-            width: '50px', height: '50px', borderRadius: '50%',
-            background: 'linear-gradient(135deg, #0085ff, #0052cc)',
-            color: '#fff', fontSize: '22px', fontWeight: 'bold',
-            display: s.collapsed ? 'flex' : 'none', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer', boxShadow: '0 4px 15px rgba(0,133,255,0.4)', userSelect: 'none'
+            width: '50px', height: '50px', borderRadius: '12px',
+            background: 'linear-gradient(135deg, #0085ff, #0066cc)',
+            color: '#fff', fontSize: '26px', fontWeight: '900',
+            display: s.collapsed ? 'flex' : 'none',
+            alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', boxShadow: '0 4px 16px rgba(0,133,255,0.5)',
+            fontFamily: 'Arial, sans-serif', userSelect: 'none',
+            transition: 'transform 0.2s'
         });
-
-        // 2. اللوحة الرئيسية
-        const panel = document.createElement('div');
-        panel.id = NS.PANEL_ID;
-        Object.assign(panel.style, {
-            position: 'fixed', bottom: '20px', right: '20px', zIndex: '99999',
-            width: `${s.panelSize.w}px`, height: `${s.panelSize.h}px`,
-            background: '#121824', color: '#f1f5f9', borderRadius: '16px',
-            boxShadow: '0 10px 30px rgba(0,0,0,0.5)', display: s.collapsed ? 'none' : 'flex',
-            flexDirection: 'column', overflow: 'hidden', fontFamily: 'system-ui, sans-serif',
-            border: '1px solid #1e293b', direction: 'rtl'
-        });
-
-        panel.innerHTML = `
-            <div style="padding:12px 16px;background:#0f172a;border-bottom:1px solid #1e293b;display:flex;justify-between;align-items:center;">
-                <span style="font-weight:bold;color:#38bdf8;">🤖 Bluesky Bot v${NS.version}</span>
-                <div>
-                    <button id="b11-toggle-pause" style="background:#0284c7;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">
-                        ${s.paused ? '▶️ تشغيل' : '⏸️ إيقاف'}
-                    </button>
-                    <button id="b11-close" style="background:transparent;color:#94a3b8;border:none;font-size:16px;cursor:pointer;margin-right:8px;">✖</button>
-                </div>
-            </div>
-            <div style="flex:1;padding:16px;overflow-y:auto;font-size:13px;line-height:1.6;">
-                <label style="display:block;margin-bottom:10px;">
-                    <input type="checkbox" id="chk-autoLike" ${s.autoLike ? 'checked' : ''}> ❤️ الإعجاب التلقائي
-                </label>
-                <label style="display:block;margin-bottom:10px;">
-                    <input type="checkbox" id="chk-autoFollow" ${s.autoFollow ? 'checked' : ''}> 👤 المتابعة التلقائية
-                </label>
-                <label style="display:block;margin-bottom:10px;color:#f43f5e;">
-                    <input type="checkbox" id="chk-autoUnfollow" ${s.autoUnfollow ? 'checked' : ''}> 🧹 إلغاء متابعة غير المتابعين
-                </label>
-                <label style="display:block;margin-bottom:10px;">
-                    <input type="checkbox" id="chk-autoFollowBack" ${s.autoFollowBack ? 'checked' : ''}> 🔄 رد المتابعة (الإشعارات)
-                </label>
-                <label style="display:block;margin-bottom:10px;">
-                    <input type="checkbox" id="chk-autoReply" ${s.autoReply ? 'checked' : ''}> 💬 الرد الآلي
-                </label>
-                <hr style="border:0;border-top:1px solid #1e293b;margin:12px 0;">
-                <div style="margin-bottom:10px;">
-                    <label style="display:block;margin-bottom:4px;color:#94a3b8;">كلمات الرد الآلي (سطر لكل رد):</label>
-                    <textarea id="txt-customReply" style="width:100%;height:60px;background:#0f172a;color:#fff;border:1px solid #334155;border-radius:6px;padding:6px;box-sizing:border-box;">${s.customReplyText}</textarea>
-                </div>
-            </div>
-            <div id="b11-footer" style="padding:8px 16px;background:#0f172a;border-top:1px solid #1e293b;font-size:11px;color:#94a3b8;text-align:center;">
-                ⏱️ جاري البدء...
-            </div>
-        `;
-
-        document.body.appendChild(mini);
-        document.body.appendChild(panel);
-
-        // ربط الأحداث للواجهة
+        mini.onmouseenter = () => mini.style.transform = 'scale(1.1)';
+        mini.onmouseleave = () => mini.style.transform = 'scale(1)';
         mini.onclick = () => {
             mini.style.display = 'none';
-            panel.style.display = 'flex';
-            s.collapsed = false;
+            const p = document.getElementById(NS.PANEL_ID);
+            if (p) p.style.display = 'flex';
+            NS.state.collapsed = false;
+            NS.saveSettings();
+        };
+        document.body.appendChild(mini);
+
+        // ✅ اللوحة الرئيسية
+        const panel = document.createElement('div');
+        panel.id = NS.PANEL_ID;
+        panel.style.display = s.collapsed ? 'none' : 'flex';
+        panel.innerHTML = NS.buildDashboardHTML();
+        document.body.appendChild(panel);
+
+        NS.injectCSS();
+        NS.bindDashboardEvents(panel, mini);
+        NS.renderAll();
+    };
+
+    /* ════════════════ HTML اللوحة ════════════════ */
+    NS.buildDashboardHTML = function () {
+        const s = NS.state;
+        const esc = NS.esc;
+
+        return `
+        <div id="b11-header">
+            <div class="b11-brand">
+                <div class="b11-logo">B</div>
+                <div>
+                    <div class="b11-title">بوت بلو سكاي</div>
+                    <div class="b11-ver">v${NS.version} PRO</div>
+                </div>
+            </div>
+            <div class="b11-controls">
+                <button class="b11-icon" id="b11-theme" title="الثيم">🌓</button>
+                <button class="b11-icon" id="b11-collapse" title="طي">➖</button>
+                <button class="b11-icon" id="b11-close" title="إغلاق">✖</button>
+            </div>
+        </div>
+        <div id="b11-tabs">
+            <button class="b11-tab active" data-t="inter">🎯 تفاعل</button>
+            <button class="b11-tab" data-t="schedule">⏰ نشر</button>
+            <button class="b11-tab" data-t="filter">🛡️ فلاتر</button>
+            <button class="b11-tab" data-t="advanced">🚀 متقدم</button>
+            <button class="b11-tab" data-t="analytic">📊 تحليل</button>
+            <button class="b11-tab" data-t="settings">⚙️ إعدادات</button>
+            <button class="b11-tab" data-t="errors">🐛 أخطاء</button>
+            <button class="b11-tab" data-t="log">📜 سجل</button>
+        </div>
+        <div id="b11-body">
+
+        <div class="b11-pane" data-p="inter">
+            <div class="b11-status">
+                <span id="b11-dbg-like">❤️?</span>
+                <span id="b11-dbg-follow">👤?</span>
+                <span id="b11-dbg-loop">🔄0</span>
+                <span id="b11-dbg-cycle">📊0</span>
+                <span id="b11-dbg-break">☕0</span>
+            </div>
+            <div class="b11-last"><b>🎯 آخر نتيجة:</b> <span id="b11-last-result">—</span></div>
+            <div class="b11-btn-row">
+                <button id="b11-test" class="b11-btn blue">🧪 فحص</button>
+                <button id="b11-restart" class="b11-btn green">🔄 إعادة</button>
+            </div>
+            <div class="b11-btn-row">
+                <button id="b11-pause" class="b11-btn gray">⏸️ إيقاف</button>
+                <button id="b11-scroll" class="b11-btn purple">⬇️ تمرير</button>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title" style="color:#f59e0b;">🔄 من الإشعارات</div>
+                <label><input type="checkbox" id="b11-fback" ${s.autoFollowBack?'checked':''}> رد المتابعة</label>
+                <label><input type="checkbox" id="b11-clike" ${s.autoLikeCommenters?'checked':''}> إعجاب المعلّقين</label>
+                <label><input type="checkbox" id="b11-notif-reply" ${s.autoReplyNotifications?'checked':''}> الرد على الإشعارات</label>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title" style="color:#a855f7;">📨 الرسائل</div>
+                <label><input type="checkbox" id="b11-msg-reply" ${s.autoReplyMessages?'checked':''}> الرد على الرسائل</label>
+                <textarea id="b11-msg-txt" rows="2" class="b11-textarea">${esc(s.messageReplyText)}</textarea>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title" style="color:#0085ff;">🎯 عام</div>
+                <label><input type="checkbox" id="b11-like" ${s.autoLike?'checked':''}> إعجاب تلقائي</label>
+                <label><input type="checkbox" id="b11-follow" ${s.autoFollow?'checked':''}> متابعة تلقائية</label>
+                <label><input type="checkbox" id="b11-repost" ${s.autoRepost?'checked':''}> إعادة نشر</label>
+                <label><input type="checkbox" id="b11-scroll-on" ${s.autoScroll?'checked':''}> تمرير تلقائي</label>
+                <label><input type="checkbox" id="b11-unfollow" ${s.autoUnfollow?'checked':''}> 🧹 إلغاء متابعة غير المتابعين</label>
+                <label><input type="checkbox" id="b11-reply" ${s.autoReply?'checked':''}> رد تلقائي عام</label>
+                <label><input type="checkbox" id="b11-dry" ${s.dryRun?'checked':''}> 🧪 وضع التجربة</label>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title">💬 قوالب الردود</div>
+                <label style="font-size:10px;">📝 نص فقط:</label>
+                <textarea id="b11-reply-txt" rows="2" class="b11-textarea">${esc(s.replyTextOnly)}</textarea>
+                <label style="font-size:10px;">🖼️ صور/فيديو:</label>
+                <textarea id="b11-reply-img" rows="2" class="b11-textarea">${esc(s.replyWithImage)}</textarea>
+                <label style="font-size:10px;">💬 عام:</label>
+                <textarea id="b11-reply-general" rows="2" class="b11-textarea">${esc(s.customReplyText)}</textarea>
+            </div>
+            <div class="b11-section">
+                <label>👤 اسم حسابك:</label>
+                <input type="text" id="b11-myhandle" value="${esc(s.myHandle)}" placeholder="username.bsky.social">
+            </div>
+        </div>
+
+        <div class="b11-pane" data-p="schedule" style="display:none">
+            <div class="b11-section">
+                <div class="b11-section-title" style="color:#3b82f6;">🔑 كلمة مرور التطبيق</div>
+                <input type="password" id="b11-app-pass" value="${esc(s.encryptPasswords ? '' : s.blueskyAppPassword)}" placeholder="xxxx-xxxx-xxxx-xxxx">
+                <div style="font-size:9px;color:#94a3b8;">${s.blueskyAppPassword ? '✅ محفوظة (مشفرة)' : 'أدخلها مرة واحدة'}</div>
+                <label style="margin-top:6px;"><input type="checkbox" id="b11-encrypt" ${s.encryptPasswords?'checked':''}> 🔐 تشفير كلمة المرور</label>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title">📝 منشور جديد</div>
+                <textarea id="b11-post-text" rows="3" class="b11-textarea" placeholder="نص المنشور..."></textarea>
+                <label style="font-size:10px;">🖼️ صورة/فيديو (اختياري):</label>
+                <input type="file" id="b11-post-media" accept="image/*,video/*">
+                <label style="font-size:10px;">📝 وصف الصورة (Alt):</label>
+                <input type="text" id="b11-post-alt" placeholder="وصف الصورة">
+                <label style="font-size:10px;">⏰ وقت النشر:</label>
+                <input type="datetime-local" id="b11-post-time">
+                <button id="b11-add-post" class="b11-btn green">➕ إضافة منشور</button>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title">📋 المنشورات المجدولة</div>
+                <div id="b11-post-list"></div>
+                <button id="b11-clear-posts" class="b11-btn gray">🗑️ مسح المنشورات المنشورة</button>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title">🌤️ الطقس</div>
+                <label><input type="checkbox" id="b11-weather-on" ${s.weatherPosts?'checked':''}> إضافة الطقس للمنشورات</label>
+                <input type="text" id="b11-weather-city" value="${esc(s.weatherCity)}" placeholder="المدينة">
+                <div class="b11-btn-row" style="grid-template-columns:1fr 1fr;">
+                    <input type="number" id="b11-weather-lat" value="${s.weatherLat}" placeholder="Lat" step="0.001">
+                    <input type="number" id="b11-weather-lon" value="${s.weatherLon}" placeholder="Lon" step="0.001">
+                </div>
+                <button id="b11-check-weather" class="b11-btn blue">🔍 فحص الطقس الآن</button>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title">📅 تقويم المحتوى</div>
+                <label><input type="checkbox" id="b11-cal-on" ${s.calendarEnabled?'checked':''}> تفعيل (ينشر الساعة 10 ص)</label>
+                ${['sun','mon','tue','wed','thu','fri','sat'].map(d =>
+                  `<input type="text" id="b11-cal-${d}" value="${esc(s.calendar[d])}" placeholder="${d}" class="b11-textarea" style="padding:4px;">`
+                ).join('')}
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title">🗓️ أحداث عالمية</div>
+                <label><input type="checkbox" id="b11-events" ${s.worldEvents?'checked':''}> إضافة تحية في المناسبات</label>
+            </div>
+        </div>
+
+        <div class="b11-pane" data-p="filter" style="display:none">
+            <label style="background:#1e3a5f;padding:8px;border-radius:6px;display:block;margin:8px 0;border:1px solid #3b82f6;">
+                <input type="checkbox" id="b11-only-arabic" ${s.onlyArabic?'checked':''}>
+                <b style="color:#60a5fa;">🇸🇦 محتوى عربي فقط</b>
+            </label>
+            <label>🌍 رمز اللغة:</label>
+            <input type="text" id="b11-lang-filter" value="${esc(s.languageFilter)}" placeholder="ar / en / fr">
+            <div class="b11-section">
+                <div class="b11-section-title" style="color:#ef4444;">🚫 كلمات محظورة</div>
+                <textarea id="b11-blacklist" rows="4" class="b11-textarea">${esc(s.blacklistWords)}</textarea>
+            </div>
+            <div class="b11-section">
+                <label><input type="checkbox" id="b11-kw-on" ${s.useKeywordFilter?'checked':''}> تفعيل كلمات مفتاحية</label>
+                <textarea id="b11-keywords" rows="3" class="b11-textarea">${esc(s.keywordFilter)}</textarea>
+            </div>
+            <label><input type="checkbox" id="b11-noavatar" ${s.skipNoAvatar?'checked':''}> تجاهل الحسابات بلا صورة</label>
+            <button id="b11-clear-mem" class="b11-btn gray">🧠 مسح ذاكرة التفاعل</button>
+        </div>
+
+        <div class="b11-pane" data-p="advanced" style="display:none">
+            <div class="b11-section">
+                <div class="b11-section-title" style="color:#a855f7;">🤝 متابعة المتفاعلين</div>
+                <label><input type="checkbox" id="b11-engagers" ${s.followEngagers?'checked':''}> متابعة من تفاعل معك</label>
+                <div style="font-size:10px;color:#94a3b8;">الطابور: ${s.engagerQueue.length} حساب</div>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title" style="color:#10b981;">🔍 تحليل المشاعر</div>
+                <label><input type="checkbox" id="b11-sentiment" ${s.sentimentAnalysis?'checked':''}> تحليل قبل الرد</label>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title" style="color:#f59e0b;">🎯 متغيرات القوالب</div>
+                <label><input type="checkbox" id="b11-tmpl-vars" ${s.useTemplateVars?'checked':''}> تفعيل {name} {handle} {post} {time} {date}</label>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title" style="color:#3b82f6;">📝 هاشتاجات تلقائية</div>
+                <label><input type="checkbox" id="b11-hashtags" ${s.autoHashtags?'checked':''}> إضافة هاشتاجات</label>
+                <textarea id="b11-hashtag-map" rows="3" class="b11-textarea" placeholder="كلمة:hashtag1,hashtag2">${esc(s.hashtagMap)}</textarea>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title" style="color:#ec4899;">📊 A/B Testing</div>
+                <label><input type="checkbox" id="b11-ab" ${s.abTesting?'checked':''}> تتبع أداء القوالب</label>
+                <div id="b11-ab-report" style="font-size:10px;background:#0f172a;padding:6px;border-radius:4px;margin-top:4px;"></div>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title" style="color:#22c55e;">🧠 تعلّم التفضيلات</div>
+                <label><input type="checkbox" id="b11-ml" ${s.mlPreferences?'checked':''}> تتبع أفضل الأوقات</label>
+                <div id="b11-ml-report" style="font-size:10px;background:#0f172a;padding:6px;border-radius:4px;margin-top:4px;"></div>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title" style="color:#06b6d4;">📈 تتبع إلغاء المتابعة</div>
+                <label><input type="checkbox" id="b11-track-unf" ${s.trackUnfollowers?'checked':''}> تتبع من ألغى متابعتك</label>
+                <div style="font-size:10px;color:#94a3b8;">متابعون معروفون: ${s.knownFollowers.length}</div>
+            </div>
+        </div>
+
+        <div class="b11-pane" data-p="analytic" style="display:none">
+            <div class="b11-stats">
+                <div>❤️ <b id="st-likes">0</b></div>
+                <div>👤 <b id="st-follows">0</b></div>
+                <div>🧹 <b id="st-unfollows">0</b></div>
+            </div>
+            <div class="b11-stats">
+                <div>💬 <b id="st-replies">0</b></div>
+                <div>🔄 <b id="st-followbacks">0</b></div>
+                <div>❤️‍🔥 <b id="st-commentlikes">0</b></div>
+            </div>
+            <div class="b11-stats">
+                <div>💬 <b id="st-notifreplies">0</b></div>
+                <div>📨 <b id="st-msgreplies">0</b></div>
+                <div>📝 <b id="st-posts">0</b></div>
+            </div>
+            <div class="b11-stats">
+                <div>🔁 <b id="st-reposts">0</b></div>
+                <div>🤝 <b id="st-engagerfollows">0</b></div>
+                <div>—</div>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title">📊 العدادات اليومية</div>
+                <div id="b11-daily" style="font-size:10px;background:#0f172a;padding:6px;border-radius:4px;"></div>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title">📈 الرسم البياني (7 أيام)</div>
+                <canvas id="b11-chart" width="340" height="120" style="background:#0f172a;border-radius:6px;"></canvas>
+            </div>
+            <div class="b11-btn-row">
+                <button id="b11-export-csv" class="b11-btn gray">⬇️ CSV</button>
+                <button id="b11-export-sheets" class="b11-btn green">📊 Sheets</button>
+            </div>
+            <button id="b11-reset-stats" class="b11-btn gray">🗑️ تصفير الإحصائيات</button>
+        </div>
+
+        <div class="b11-pane" data-p="settings" style="display:none">
+            <div class="b11-section" style="border:1px solid #22c55e;background:linear-gradient(135deg,#0a1f12,#0d1a0f);">
+                <div class="b11-section-title" style="color:#22c55e;">🔄 تحديثات البوت</div>
+                <div style="font-size:11px;color:#cbd5e1;text-align:center;margin:4px 0;">
+                    الإصدار الحالي: <b style="color:#22c55e;">v${NS.version}</b>
+                </div>
+                <div id="b11-update-status" style="font-size:10px;color:#94a3b8;text-align:center;margin:6px 0;min-height:16px;">
+                    ✅ فحص تلقائي كل 24 ساعة
+                </div>
+                <button id="b11-check-update" class="b11-btn" style="background:linear-gradient(135deg,#22c55e,#16a34a);font-size:12px;padding:10px;">
+                    🔄 التحقق من التحديثات الآن
+                </button>
+                <label style="margin-top:6px;font-size:10px;">
+                    <input type="checkbox" id="b11-auto-update" ${s.autoUpdateCheck !== false ? 'checked' : ''}> 
+                    فحص تلقائي كل 24 ساعة
+                </label>
+                <div id="b11-last-check" style="font-size:9px;color:#64748b;text-align:center;margin-top:4px;"></div>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title">⏰ جدولة زمنية</div>
+                <label><input type="checkbox" id="b11-sch-on" ${s.scheduleEnabled?'checked':''}> تفعيل</label>
+                <div class="b11-btn-row" style="grid-template-columns:1fr 1fr;">
+                    <input type="number" id="b11-sch-start" value="${s.scheduleStart}" min="0" max="23">
+                    <input type="number" id="b11-sch-end" value="${s.scheduleEnd}" min="0" max="24">
+                </div>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title">🔢 حد يومي</div>
+                <label><input type="checkbox" id="b11-dl-on" ${s.dailyLimitsEnabled?'checked':''}> تفعيل</label>
+                <div class="b11-btn-row" style="grid-template-columns:1fr 1fr;">
+                    <input type="number" id="b11-dl-likes" value="${s.dailyLimitLikes}" placeholder="إعجابات">
+                    <input type="number" id="b11-dl-follows" value="${s.dailyLimitFollows}" placeholder="متابعات">
+                    <input type="number" id="b11-dl-replies" value="${s.dailyLimitReplies}" placeholder="ردود">
+                    <input type="number" id="b11-dl-msgs" value="${s.dailyLimitMessages}" placeholder="رسائل">
+                    <input type="number" id="b11-dl-posts" value="${s.dailyLimitPosts}" placeholder="منشورات">
+                    <input type="number" id="b11-dl-reposts" value="${s.dailyLimitReposts}" placeholder="إعادة نشر">
+                </div>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title">⚙️ معدل</div>
+                <input type="number" id="b11-rate" value="${s.rateLimitPerMin}" min="1" max="30">
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title">☕ استراحة بشرية</div>
+                <label><input type="checkbox" id="b11-hb-on" ${s.humanBreakEnabled?'checked':''}> تفعيل</label>
+                <div class="b11-btn-row" style="grid-template-columns:1fr 1fr;">
+                    <input type="number" id="b11-hb-min" value="${s.humanBreakEveryMin}" placeholder="كل">
+                    <input type="number" id="b11-hb-max" value="${s.humanBreakEveryMax}" placeholder="إلى">
+                    <input type="number" id="b11-br-min" value="${s.breakDurationMin}" placeholder="دقيقة">
+                    <input type="number" id="b11-br-max" value="${s.breakDurationMax}" placeholder="إلى">
+                </div>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title" style="color:#a855f7;">👥 الحسابات المتعددة</div>
+                <div id="b11-profiles" style="margin-bottom:6px;"></div>
+                <button id="b11-add-profile" class="b11-btn green">➕ حفظ الحالي كحساب</button>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title">💾 الإعدادات</div>
+                <button id="b11-export-settings" class="b11-btn blue">⬇️ تصدير JSON</button>
+                <button id="b11-import-settings" class="b11-btn green">⬆️ استيراد JSON</button>
+                <input type="file" id="b11-import-file" accept=".json" style="display:none;">
+            </div>
+            <div class="b11-section" style="border:1px solid #ff5e5b;background:linear-gradient(135deg,#2a1810,#1a0f08);">
+                <div class="b11-section-title" style="color:#ff5e5b;">❤️ دعم المطوّر</div>
+                <div style="font-size:11px;color:#fbbf24;text-align:center;margin:6px 0;font-weight:600;">
+                    ادعم البوت بتبرع صغير 💙
+                </div>
+                <button id="b11-donate" class="b11-btn" style="background:linear-gradient(135deg,#ff5e5b,#d946ef);font-size:13px;padding:10px;">
+                    ☕ تبرع عبر Ko-fi
+                </button>
+                <div style="font-size:9px;color:#94a3b8;text-align:center;margin-top:4px;">
+                    ko-fi.com/heromax7411
+                </div>
+            </div>
+            <div class="b11-section" style="border:1px solid #0085ff;">
+                <div class="b11-section-title" style="color:#0085ff;">👨‍💻 المطوّر</div>
+                <button id="b11-dev" class="b11-btn blue">🌐 زيارة موقع المطوّر</button>
+                <button id="b11-github" class="b11-btn gray">🐙 GitHub Repository</button>
+                <div style="font-size:10px;color:#94a3b8;text-align:center;margin-top:4px;">
+                    Sayed Alhlwani — v${NS.version}
+                </div>
+            </div>
+        </div>
+
+        <div class="b11-pane" data-p="errors" style="display:none">
+            <div class="b11-section">
+                <div class="b11-section-title" style="color:#ef4444;">🐛 سجل الأخطاء</div>
+                <div style="font-size:10px;color:#94a3b8;margin:4px 0;">
+                    يتم تسجيل كل خطأ تلقائياً (آخر 50 خطأ)
+                </div>
+                <div id="b11-error-count" style="font-size:11px;color:#fbbf24;text-align:center;margin:6px 0;"></div>
+                <button id="b11-report-error" class="b11-btn" style="background:linear-gradient(135deg,#ef4444,#dc2626);">
+                    📤 إرسال آخر 5 أخطاء إلى GitHub
+                </button>
+                <div class="b11-btn-row">
+                    <button id="b11-export-errors" class="b11-btn gray">⬇️ تصدير JSON</button>
+                    <button id="b11-clear-errors" class="b11-btn gray">🗑️ مسح الكل</button>
+                </div>
+            </div>
+            <div class="b11-section">
+                <div class="b11-section-title">📋 آخر الأخطاء:</div>
+                <div id="b11-error-list" style="font-size:10px;font-family:monospace;background:#0a121e;padding:8px;border-radius:6px;max-height:280px;overflow-y:auto;"></div>
+            </div>
+        </div>
+
+        <div class="b11-pane" data-p="log" style="display:none">
+            <button id="b11-log-clear" class="b11-btn gray">🗑️ مسح السجل</button>
+            <div id="b11-log-box" class="b11-list"></div>
+        </div>
+
+        </div>
+        <div id="b11-resize"></div>
+        <div id="b11-footer">جاهز • Shift+B للإظهار/الإخفاء</div>
+        `;
+    };
+
+    /* ════════════════ CSS اللوحة ════════════════ */
+    NS.injectCSS = function () {
+        if (document.getElementById('b11-css')) return;
+        const s = NS.state;
+        const css = document.createElement('style');
+        css.id = 'b11-css';
+        css.textContent = `
+            #${NS.PANEL_ID}{position:fixed;top:70px;right:20px;z-index:99999;width:${s.panelSize.w}px;height:${s.panelSize.h}px;background:linear-gradient(160deg,#0d1420 0%,#161e27 100%);color:#e2e8f0;border-radius:14px;border:1px solid #1e293b;box-shadow:0 12px 40px rgba(0,0,0,0.6),0 0 0 1px rgba(0,133,255,0.1);font-family:-apple-system,'Segoe UI',sans-serif;font-size:12px;flex-direction:column;overflow:hidden;}
+            #b11-header{padding:12px 14px;background:linear-gradient(135deg,#1e293b,#0f172a);display:flex;justify-content:space-between;align-items:center;cursor:move;border-bottom:1px solid #1e293b;}
+            .b11-brand{display:flex;align-items:center;gap:10px;}
+            .b11-logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#0085ff,#0066cc);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:19px;box-shadow:0 4px 12px rgba(0,133,255,0.4);}
+            .b11-title{font-weight:700;font-size:13px;color:#fff;}
+            .b11-ver{font-size:9px;color:#60a5fa;font-weight:600;}
+            .b11-controls{display:flex;gap:4px;}
+            .b11-icon{width:26px;height:26px;border:none;border-radius:6px;background:rgba(255,255,255,0.06);color:#cbd5e1;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;transition:all 0.15s;}
+            .b11-icon:hover{background:rgba(255,255,255,0.15);color:#fff;}
+            #b11-tabs{display:flex;gap:2px;padding:6px;background:#0a121e;overflow-x:auto;flex-shrink:0;}
+            .b11-tab{flex:1;min-width:44px;background:transparent;color:#64748b;border:none;padding:6px 2px;border-radius:6px;font-size:9px;cursor:pointer;font-weight:600;transition:all 0.15s;white-space:nowrap;}
+            .b11-tab:hover{color:#94a3b8;background:rgba(255,255,255,0.03);}
+            .b11-tab.active{background:linear-gradient(135deg,#0085ff,#0066cc);color:#fff;box-shadow:0 2px 8px rgba(0,133,255,0.4);}
+            #b11-body{flex:1;padding:12px;overflow-y:auto;overflow-x:hidden;}
+            #b11-body::-webkit-scrollbar{width:6px;}
+            #b11-body::-webkit-scrollbar-thumb{background:#334155;border-radius:3px;}
+            #b11-body::-webkit-scrollbar-track{background:transparent;}
+            .b11-section{background:rgba(15,23,42,0.5);border:1px solid #1e293b;border-radius:8px;padding:8px 10px;margin:6px 0;}
+            .b11-section-title{font-weight:700;font-size:11px;margin-bottom:6px;color:#cbd5e1;display:flex;align-items:center;gap:4px;}
+            #${NS.PANEL_ID} label{display:flex;align-items:center;gap:6px;font-size:11px;margin:4px 0;cursor:pointer;color:#cbd5e1;}
+            #${NS.PANEL_ID} input[type="checkbox"]{accent-color:#0085ff;}
+            #${NS.PANEL_ID} input[type="text"],#${NS.PANEL_ID} input[type="number"],#${NS.PANEL_ID} input[type="password"],#${NS.PANEL_ID} input[type="datetime-local"],#${NS.PANEL_ID} input[type="file"]{width:100%;font-size:11px;padding:6px 8px;margin:3px 0;background:#0a121e;color:#e2e8f0;border:1px solid #1e293b;border-radius:6px;box-sizing:border-box;transition:border 0.15s;}
+            #${NS.PANEL_ID} input:focus{outline:none;border-color:#0085ff;box-shadow:0 0 0 2px rgba(0,133,255,0.15);}
+            #${NS.PANEL_ID} .b11-textarea{width:100%;font-size:11px;padding:6px 8px;margin:3px 0;background:#0a121e;color:#e2e8f0;border:1px solid #1e293b;border-radius:6px;box-sizing:border-box;font-family:'Consolas',monospace;resize:vertical;transition:border 0.15s;}
+            #${NS.PANEL_ID} .b11-textarea:focus{outline:none;border-color:#0085ff;box-shadow:0 0 0 2px rgba(0,133,255,0.15);}
+            .b11-btn{width:100%;padding:8px;border:none;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;margin:3px 0;color:#fff;transition:all 0.15s;font-family:inherit;}
+            .b11-btn:hover{transform:translateY(-1px);filter:brightness(1.1);}
+            .b11-btn:active{transform:translateY(0);}
+            .b11-btn.green{background:linear-gradient(135deg,#22c55e,#16a34a);}
+            .b11-btn.blue{background:linear-gradient(135deg,#0085ff,#0066cc);}
+            .b11-btn.gray{background:linear-gradient(135deg,#475569,#334155);}
+            .b11-btn.purple{background:linear-gradient(135deg,#6366f1,#4f46e5);}
+            .b11-btn-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:4px 0;}
+            .b11-btn-row .b11-btn{margin:0;}
+            .b11-status{display:flex;gap:8px;padding:8px;background:linear-gradient(135deg,#0a121e,#0f172a);border:1px solid #1e293b;border-radius:8px;font-size:10px;margin-bottom:6px;justify-content:space-around;}
+            .b11-last{background:#0a121e;padding:8px;border-radius:6px;font-size:10px;margin-bottom:6px;border:1px solid #1e293b;}
+            #b11-log-box{background:#0a121e;padding:8px;border-radius:6px;font-size:10px;color:#cbd5e1;max-height:380px;overflow-y:auto;margin:4px 0;font-family:'Consolas',monospace;line-height:1.6;}
+            .b11-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px;}
+            .b11-stats div{background:linear-gradient(135deg,#0a121e,#0f172a);padding:8px 4px;border-radius:6px;text-align:center;font-size:11px;border:1px solid #1e293b;font-weight:600;}
+            #b11-resize{position:absolute;bottom:0;left:0;width:20px;height:20px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 50%,#0085ff 50%,#0085ff 60%,transparent 60%,transparent 70%,#0085ff 70%,#0085ff 80%,transparent 80%);opacity:0.6;}
+            #b11-resize:hover{opacity:1;}
+            #b11-footer{padding:6px 12px;font-size:10px;color:#10b981;background:#0a121e;border-top:1px solid #1e293b;text-align:center;border-bottom-left-radius:14px;border-bottom-right-radius:14px;}
+        `;
+        document.head.appendChild(css);
+    };
+
+    /* ════════════════ ربط الأحداث ════════════════ */
+    NS.bindDashboardEvents = function (panel, mini) {
+        // التبويبات
+        document.querySelectorAll('.b11-tab').forEach(tab => {
+            tab.onclick = () => {
+                document.querySelectorAll('.b11-tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.b11-pane').forEach(p => p.style.display = 'none');
+                tab.classList.add('active');
+                document.querySelector(`.b11-pane[data-p="${tab.dataset.t}"]`).style.display = 'block';
+                if (tab.dataset.t === 'log') NS.renderLog();
+                if (tab.dataset.t === 'analytic') { NS.renderChart(); NS.renderDailyStats(); }
+                if (tab.dataset.t === 'advanced') { NS.renderABReport(); NS.renderMLReport(); }
+                if (tab.dataset.t === 'errors') NS.renderErrorTab();
+            };
+        });
+
+        // ربط المدخلات
+        const bind = (id, key, isCheck) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el[isCheck ? 'onchange' : 'oninput'] = e => {
+                NS.state[key] = isCheck ? e.target.checked : e.target.value;
+                NS.saveSettings();
+            };
+        };
+        const bn = (id, key, min, max) => {
+            min = min || 0; max = max || 100000;
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.oninput = e => {
+                const v = parseInt(e.target.value, 10);
+                if (!isNaN(v) && v >= min && v <= max) {
+                    NS.state[key] = v;
+                    NS.saveSettings();
+                }
+            };
+        };
+
+        bind('b11-like','autoLike',true); bind('b11-follow','autoFollow',true);
+        bind('b11-unfollow','autoUnfollow',true); bind('b11-reply','autoReply',true);
+        bind('b11-scroll-on','autoScroll',true); bind('b11-dry','dryRun',true);
+        bind('b11-fback','autoFollowBack',true); bind('b11-clike','autoLikeCommenters',true);
+        bind('b11-notif-reply','autoReplyNotifications',true);
+        bind('b11-msg-reply','autoReplyMessages',true);
+        bind('b11-repost','autoRepost',true);
+        bind('b11-myhandle','myHandle');
+        bind('b11-reply-txt','replyTextOnly');
+        bind('b11-reply-img','replyWithImage');
+        bind('b11-reply-general','customReplyText');
+        bind('b11-msg-txt','messageReplyText');
+        bind('b11-blacklist','blacklistWords');
+        bind('b11-keywords','keywordFilter');
+        bind('b11-kw-on','useKeywordFilter',true);
+        bind('b11-noavatar','skipNoAvatar',true);
+        bind('b11-hb-on','humanBreakEnabled',true);
+        bind('b11-only-arabic','onlyArabic',true);
+        bind('b11-lang-filter','languageFilter');
+        bind('b11-encrypt','encryptPasswords',true);
+        bind('b11-sch-on','scheduleEnabled',true);
+        bind('b11-dl-on','dailyLimitsEnabled',true);
+        bind('b11-weather-on','weatherPosts',true);
+        bind('b11-weather-city','weatherCity');
+        bind('b11-cal-on','calendarEnabled',true);
+        bind('b11-events','worldEvents',true);
+        bind('b11-engagers','followEngagers',true);
+        bind('b11-sentiment','sentimentAnalysis',true);
+        bind('b11-tmpl-vars','useTemplateVars',true);
+        bind('b11-hashtags','autoHashtags',true);
+        bind('b11-hashtag-map','hashtagMap');
+        bind('b11-ab','abTesting',true);
+        bind('b11-ml','mlPreferences',true);
+        bind('b11-track-unf','trackUnfollowers',true);
+
+        // كلمة المرور
+        const passEl = document.getElementById('b11-app-pass');
+        if (passEl) passEl.onchange = e => {
+            NS.setEncryptedPass(e.target.value);
+            e.target.value = '';
+        };
+
+        // تقويم المحتوى
+        ['sun','mon','tue','wed','thu','fri','sat'].forEach(d => {
+            const el = document.getElementById(`b11-cal-${d}`);
+            if (el) el.oninput = e => {
+                NS.state.calendar[d] = e.target.value;
+                NS.saveSettings();
+            };
+        });
+
+        // الأرقام
+        bn('b11-rate','rateLimitPerMin',1,30);
+        bn('b11-hb-min','humanBreakEveryMin',5,100);
+        bn('b11-hb-max','humanBreakEveryMax',5,200);
+        bn('b11-br-min','breakDurationMin',1,30);
+        bn('b11-br-max','breakDurationMax',1,60);
+        bn('b11-sch-start','scheduleStart',0,23);
+        bn('b11-sch-end','scheduleEnd',0,24);
+        bn('b11-dl-likes','dailyLimitLikes',0,100000);
+        bn('b11-dl-follows','dailyLimitFollows',0,100000);
+        bn('b11-dl-replies','dailyLimitReplies',0,100000);
+        bn('b11-dl-msgs','dailyLimitMessages',0,100000);
+        bn('b11-dl-posts','dailyLimitPosts',0,1000);
+        bn('b11-dl-reposts','dailyLimitReposts',0,10000);
+        bn('b11-weather-lat','weatherLat',-90,90);
+        bn('b11-weather-lon','weatherLon',-180,180);
+
+        // إضافة منشور
+        document.getElementById('b11-add-post').onclick = () => {
+            const text = document.getElementById('b11-post-text').value.trim();
+            const timeInput = document.getElementById('b11-post-time').value;
+            const mediaInput = document.getElementById('b11-post-media');
+            const alt = document.getElementById('b11-post-alt').value;
+
+            if (!text && !mediaInput.files[0]) { alert('أدخل نصاً أو وسائط'); return; }
+            if (!timeInput) { alert('حدد الوقت'); return; }
+            const time = new Date(timeInput).getTime();
+            if (isNaN(time)) { alert('وقت غير صالح'); return; }
+
+            const addPost = (blob) => {
+                NS.state.scheduledPosts.push({
+                    id: Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+                    text, time, posted: false,
+                    mediaBlob: blob || null, mediaAlt: alt,
+                    mediaType: blob && blob.type && blob.type.startsWith('video') ? 'video' : 'image'
+                });
+                NS.forceSaveSettings();
+                document.getElementById('b11-post-text').value = '';
+                document.getElementById('b11-post-time').value = '';
+                document.getElementById('b11-post-alt').value = '';
+                document.getElementById('b11-post-media').value = '';
+                NS.renderScheduledPosts();
+                NS.notify('تمت الإضافة', 'سيُنشر في الموعد');
+            };
+            if (mediaInput.files[0]) addPost(mediaInput.files[0]);
+            else addPost();
+        };
+
+        document.getElementById('b11-clear-posts').onclick = () => {
+            NS.state.scheduledPosts = NS.state.scheduledPosts.filter(p => !p.posted);
+            NS.forceSaveSettings();
+            NS.renderScheduledPosts();
+        };
+
+        document.getElementById('b11-check-weather').onclick = async () => {
+            const w = await NS.fetchWeather();
+            if (w) alert(`🌤️ ${NS.state.weatherCity}: ${w.temp}°C ${w.desc}`);
+            else alert('❌ فشل جلب الطقس');
+        };
+
+        document.getElementById('b11-add-profile').onclick = () => {
+            const name = prompt('اسم الحساب:');
+            if (name) { NS.saveCurrentAsProfile(name); NS.renderProfiles(); }
+        };
+
+        document.getElementById('b11-donate').onclick = () => {
+            window.open(NS.DONATE_URL, '_blank');
+            NS.notify('شكراً 💙', 'شكراً لدعمك!');
+        };
+
+        document.getElementById('b11-dev').onclick = () => window.open(NS.DEV_URL, '_blank');
+        document.getElementById('b11-github').onclick = () => window.open(`https://github.com/${NS.GITHUB_REPO}`, '_blank');
+
+        // أزرار الأخطاء
+        document.getElementById('b11-report-error').onclick = () => NS.reportErrorToGitHub();
+        document.getElementById('b11-export-errors').onclick = NS.exportErrorLog;
+        document.getElementById('b11-clear-errors').onclick = NS.clearErrorLog;
+
+        // تصدير/استيراد
+        document.getElementById('b11-export-settings').onclick = NS.exportSettings;
+        document.getElementById('b11-import-settings').onclick = () => {
+            document.getElementById('b11-import-file').click();
+        };
+        document.getElementById('b11-import-file').onchange = e => {
+            if (e.target.files[0]) NS.importSettings(e.target.files[0]);
+        };
+
+        // أزرار التحكم
+        document.getElementById('b11-restart').onclick = () => {
+            NS.setFooter('⏳ إعادة تشغيل...');
+            NS.loopGeneration++;
+            setTimeout(() => { NS.botLoop(); NS.setFooter('✅'); }, 300);
+        };
+        document.getElementById('b11-pause').onclick = e => {
+            NS.state.paused = !NS.state.paused;
+            e.target.innerText = NS.state.paused ? '▶️ استئناف' : '⏸️ إيقاف';
+            e.target.className = NS.state.paused ? 'b11-btn green' : 'b11-btn gray';
+            NS.saveSettings();
+        };
+        document.getElementById('b11-scroll').onclick = () => NS.autoScrollDown(true, NS.loopGeneration);
+
+        document.getElementById('b11-test').onclick = () => {
+            const f = NS.collectAllFollowButtons();
+            const l = NS.collectAllLikeButtons();
+            const r = NS.collectAllRepostButtons();
+            alert([
+                `📄 ${location.pathname}`,
+                `👤 اسمك: ${NS.state.myHandle || '؟'}`,
+                `👥 متابعة: ${f.length} | ❤️ إعجاب: ${l.length} | 🔄 إعادة: ${r.length}`,
+                `🌐 لغة: ${NS.state.languageFilter || 'معطّلة'}`,
+                `⏰ جدولة: ${NS.state.scheduleEnabled ? 'مفعّلة' : 'معطّلة'}`,
+                `🔢 حد يومي: ${NS.state.dailyLimitsEnabled ? 'مفعّل' : 'معطّل'}`,
+                `📊 طابور متفاعلين: ${NS.state.engagerQueue.length}`,
+                `👥 متابعون معروفون: ${NS.state.knownFollowers.length}`,
+                `🐛 أخطاء: ${NS.errorLog.length}`
+            ].join('\n'));
+        };
+
+        document.getElementById('b11-clear-mem').onclick = () => {
+            if (confirm('مسح ذاكرة التفاعل؟')) {
+                ['processedLikes','processedFollows','processedFollowBacks','processedCommentLikes',
+                 'processedNotifReplies','processedMessages','processedReposts','processedPosts']
+                    .forEach(k => NS.state[k] = []);
+                NS.state.unfollowedUsers = [];
+                NS.state.actionCounter = 0;
+                NS.forceSaveSettings();
+                NS.pushLog('info', '🧠 مسح الذاكرة');
+                alert('✅');
+            }
+        };
+
+        // الثيم
+        document.getElementById('b11-theme').onclick = () => {
+            NS.state.theme = NS.state.theme === 'dark' ? 'light' : 'dark';
+            const bg = NS.state.theme === 'light' ? '#f1f5f9' : '#161e27';
+            const cl = NS.state.theme === 'light' ? '#0f172a' : '#e2e8f0';
+            panel.style.background = bg;
+            panel.style.color = cl;
             NS.saveSettings();
         };
 
+        // طي وإغلاق
+        document.getElementById('b11-collapse').onclick = () => {
+            panel.style.display = 'none';
+            mini.style.display = 'flex';
+            NS.state.collapsed = true;
+            NS.saveSettings();
+        };
         document.getElementById('b11-close').onclick = () => {
             panel.style.display = 'none';
             mini.style.display = 'flex';
-            s.collapsed = true;
+            NS.state.collapsed = true;
             NS.saveSettings();
         };
 
-        const pauseBtn = document.getElementById('b11-toggle-pause');
-        pauseBtn.onclick = () => {
-            s.paused = !s.paused;
-            pauseBtn.innerText = s.paused ? '▶️ تشغيل' : '⏸️ إيقاف';
-            NS.saveSettings();
+        // Shift+B
+        document.addEventListener('keydown', e => {
+            if (e.shiftKey && e.key.toLowerCase() === 'b') {
+                const vis = panel.style.display !== 'none';
+                panel.style.display = vis ? 'none' : 'flex';
+                mini.style.display = vis ? 'flex' : 'none';
+                NS.state.collapsed = vis;
+                NS.saveSettings();
+            }
+        });
+
+        // السحب
+        const handle = document.getElementById('b11-header');
+        let p1 = 0, p2 = 0, p3 = 0, p4 = 0;
+        handle.onmousedown = e => {
+            if (e.target.closest('.b11-icon')) return;
+            e.preventDefault();
+            p3 = e.clientX; p4 = e.clientY;
+            document.onmouseup = () => { document.onmouseup = null; document.onmousemove = null; };
+            document.onmousemove = ev => {
+                ev.preventDefault();
+                p1 = p3 - ev.clientX;
+                p2 = p4 - ev.clientY;
+                p3 = ev.clientX; p4 = ev.clientY;
+                panel.style.top = (panel.offsetTop - p2) + "px";
+                panel.style.left = (panel.offsetLeft - p1) + "px";
+                panel.style.right = 'auto';
+            };
         };
 
-        // ربط خانات الإختيار
-        const bindCheck = (id, key) => {
-            const el = document.getElementById(id);
-            if (el) el.onchange = (e) => { s[key] = e.target.checked; NS.saveSettings(); };
+        // التكبير/التصغير
+        const resizer = document.getElementById('b11-resize');
+        let rw = 0, rh = 0, rx = 0, ry = 0;
+        resizer.onmousedown = e => {
+            e.preventDefault();
+            rx = e.clientX; ry = e.clientY;
+            rw = panel.offsetWidth; rh = panel.offsetHeight;
+            document.onmouseup = () => { document.onmouseup = null; document.onmousemove = null; };
+            document.onmousemove = ev => {
+                const w = Math.max(320, Math.min(900, rw + (rx - ev.clientX)));
+                const h = Math.max(300, Math.min(900, rh + (ev.clientY - ry)));
+                panel.style.width = w + 'px';
+                panel.style.height = h + 'px';
+                NS.state.panelSize = { w, h };
+            };
+        };
+        resizer.onmouseup = () => { NS.forceSaveSettings(); };
+
+        // تصدير CSV
+        document.getElementById('b11-export-csv').onclick = () => {
+            const rows = [['date','likes','follows','unfollows','replies','followBacks',
+                           'commentLikes','notifReplies','messageReplies','posts','reposts']];
+            NS.stats.history.forEach(h => rows.push([
+                h.d, h.likes || 0, h.follows || 0, h.unfollows || 0,
+                h.replies || 0, h.followBacks || 0, h.commentLikes || 0,
+                h.notifReplies || 0, h.messageReplies || 0, h.posts || 0, h.reposts || 0
+            ]));
+            const blob = new Blob([rows.map(r => r.join(',')).join('\n')], { type: 'text/csv' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'bsky-stats.csv';
+            a.click();
+        };
+        document.getElementById('b11-export-sheets').onclick = NS.exportToSheets;
+
+        // تصفير الإحصائيات
+        document.getElementById('b11-reset-stats').onclick = () => {
+            if (confirm('تصفير الإحصائيات؟')) {
+                NS.stats = {
+                    likes: 0, follows: 0, unfollows: 0, replies: 0, followBacks: 0,
+                    commentLikes: 0, notifReplies: 0, messageReplies: 0, posts: 0,
+                    reposts: 0, engagerFollows: 0, history: []
+                };
+                NS.saveStats();
+                NS.updateStatsUI();
+                NS.renderChart();
+            }
         };
 
-        bindCheck('chk-autoLike', 'autoLike');
-        bindCheck('chk-autoFollow', 'autoFollow');
-        bindCheck('chk-autoUnfollow', 'autoUnfollow');
-        bindCheck('chk-autoFollowBack', 'autoFollowBack');
-        bindCheck('chk-autoReply', 'autoReply');
+        // مسح السجل
+        document.getElementById('b11-log-clear').onclick = () => {
+            if (confirm('مسح السجل؟')) {
+                NS.state.activityLog = [];
+                NS.forceSaveSettings();
+                NS.renderLog();
+            }
+        };
 
-        const txtReply = document.getElementById('txt-customReply');
-        if (txtReply) {
-            txtReply.onchange = (e) => { s.customReplyText = e.target.value; NS.saveSettings(); };
+        // 🔄 أزرار التحديث
+        const checkUpdBtn = document.getElementById('b11-check-update');
+        if (checkUpdBtn) {
+            checkUpdBtn.onclick = async () => {
+                const status = document.getElementById('b11-update-status');
+                checkUpdBtn.disabled = true;
+                checkUpdBtn.innerText = '⏳ جاري الفحص...';
+                if (status) status.innerText = '⏳ جاري التحقق من GitHub...';
+
+                const hasUpdate = await NS.checkForUpdate(false);
+
+                checkUpdBtn.disabled = false;
+                checkUpdBtn.innerText = '🔄 التحقق من التحديثات الآن';
+                if (status) status.innerText = hasUpdate ? '🆕 تحديث متوفر!' : '✅ أنت تستخدم أحدث نسخة';
+
+                const lastEl = document.getElementById('b11-last-check');
+                if (lastEl) lastEl.innerText = `آخر فحص: ${new Date().toLocaleString('ar-EG')}`;
+            };
+        }
+
+        const autoUpdEl = document.getElementById('b11-auto-update');
+        if (autoUpdEl) {
+            autoUpdEl.onchange = e => {
+                NS.state.autoUpdateCheck = e.target.checked;
+                NS.saveSettings();
+            };
+        }
+
+        const lastCheckEl = document.getElementById('b11-last-check');
+        if (lastCheckEl) {
+            const last = parseInt(localStorage.getItem('bsky_bot_last_update_check') || '0', 10);
+            if (last > 0) lastCheckEl.innerText = `آخر فحص: ${new Date(last).toLocaleString('ar-EG')}`;
         }
     };
 
-    /* ════════════════ اختصارات لوحة المفاتيح والتهيئة ════════════════ */
-    window.addEventListener('keydown', (e) => {
-        if (e.shiftKey && e.key.toUpperCase() === 'B') {
-            NS.state.collapsed = !NS.state.collapsed;
-            const p = document.getElementById(NS.PANEL_ID);
-            const m = document.getElementById(NS.PANEL_ID + '-mini');
-            if (p && m) {
-                p.style.display = NS.state.collapsed ? 'none' : 'flex';
-                m.style.display = NS.state.collapsed ? 'flex' : 'none';
-            }
-            NS.saveSettings();
+    /* ════════════════ دوال العرض ════════════════ */
+    NS.renderAll = function () {
+        NS.renderLog();
+        NS.updateStatsUI();
+        NS.renderScheduledPosts();
+        NS.renderDailyStats();
+        NS.renderProfiles();
+        NS.renderChart();
+        NS.renderABReport();
+        NS.renderMLReport();
+        NS.renderErrorTab();
+    };
+
+    NS.updateStatsUI = function () {
+        const s = (id, v) => { const e = document.getElementById(id); if (e) e.innerText = v; };
+        s('st-likes', NS.stats.likes);
+        s('st-follows', NS.stats.follows);
+        s('st-unfollows', NS.stats.unfollows);
+        s('st-replies', NS.stats.replies);
+        s('st-followbacks', NS.stats.followBacks || 0);
+        s('st-commentlikes', NS.stats.commentLikes || 0);
+        s('st-notifreplies', NS.stats.notifReplies || 0);
+        s('st-msgreplies', NS.stats.messageReplies || 0);
+        s('st-posts', NS.stats.posts || 0);
+        s('st-reposts', NS.stats.reposts || 0);
+        s('st-engagerfollows', NS.stats.engagerFollows || 0);
+    };
+
+    NS.updateDebugInfo = function (type, val) {
+        const map = { like: 'b11-dbg-like', follow: 'b11-dbg-follow' };
+        const icons = { like: '❤️', follow: '👤' };
+        const el = document.getElementById(map[type]);
+        if (!el) return;
+        const c = val > 0 ? '#10b981' : '#ef4444';
+        el.innerHTML = `${icons[type]}<b style="color:${c}">${val}</b>`;
+    };
+
+    NS.renderLog = function () {
+        const el = document.getElementById('b11-log-box');
+        if (!el) return;
+        el.innerHTML = NS.state.activityLog.slice(-100).reverse().map(l => {
+            const color = l.type.includes('fail') ? '#ef4444'
+                        : l.type.includes('break') ? '#a855f7'
+                        : l.type.includes('follow-back') ? '#f59e0b'
+                        : l.type.includes('comment-like') ? '#ec4899'
+                        : l.type.includes('notif-reply') ? '#3b82f6'
+                        : l.type.includes('message-reply') ? '#8b5cf6'
+                        : l.type.includes('post') ? '#22c55e'
+                        : l.type.includes('repost') ? '#06b6d4'
+                        : l.type.includes('engager') ? '#10b981'
+                        : l.type.includes('cleanup') ? '#f97316'
+                        : l.type.includes('unfollower') ? '#ef4444'
+                        : '#cbd5e1';
+            return `<div style="color:${color}">${new Date(l.t).toLocaleTimeString()} • ${l.type} • ${NS.esc(l.detail)}</div>`;
+        }).join('');
+
+        const last = document.getElementById('b11-last-result');
+        if (last && NS.state.lastClickResult) last.innerText = NS.state.lastClickResult;
+    };
+
+    NS.renderScheduledPosts = function () {
+        const el = document.getElementById('b11-post-list');
+        if (!el) return;
+        if (NS.state.scheduledPosts.length === 0) {
+            el.innerHTML = '<div style="color:#64748b;text-align:center;padding:6px;">لا توجد منشورات</div>';
+            return;
         }
-    });
+        el.innerHTML = NS.state.scheduledPosts.slice(-20).reverse().map(p => {
+            const d = new Date(p.time);
+            const st = p.posted ? '✅' : '⏳';
+            const media = p.mediaBlob ? ' 📎' : '';
+            return `<div style="background:#0a121e;padding:5px 8px;border-radius:5px;margin:3px 0;display:flex;justify-content:space-between;align-items:center;font-size:10px;">
+                <span>${st}${media} ${NS.esc(p.text.slice(0, 25))}...</span>
+                <span style="color:#94a3b8;font-size:9px;">${d.toLocaleString('ar-EG')}</span>
+            </div>`;
+        }).join('');
+    };
 
-    // تشغيل التطبيق
-    NS.createDashboard();
-    NS.botLoop();
+    NS.renderDailyStats = function () {
+        const el = document.getElementById('b11-daily');
+        if (!el) return;
+        const c = NS.getDailyCounters();
+        el.innerHTML = `
+            ❤️ ${c.likes || 0}/${NS.state.dailyLimitLikes} |
+            👤 ${c.follows || 0}/${NS.state.dailyLimitFollows} |
+            💬 ${c.replies || 0}/${NS.state.dailyLimitReplies} |
+            📨 ${c.messages || 0}/${NS.state.dailyLimitMessages} |
+            📝 ${c.posts || 0}/${NS.state.dailyLimitPosts} |
+            🔁 ${c.reposts || 0}/${NS.state.dailyLimitReposts}
+        `;
+    };
 
-    console.log('📦 ui.js محمّل ومُكتمل بنجاح');
+    NS.renderProfiles = function () {
+        const el = document.getElementById('b11-profiles');
+        if (!el) return;
+        if (NS.profiles.length === 0) {
+            el.innerHTML = '<div style="color:#64748b;font-size:10px;">لا توجد حسابات محفوظة</div>';
+            return;
+        }
+        el.innerHTML = NS.profiles.map((p, i) => `
+            <div style="display:flex;justify-content:space-between;align-items:center;background:#0a121e;padding:5px 8px;border-radius:5px;margin:3px 0;font-size:11px;">
+                <span>${i === NS.activeProfileIdx ? '🟢' : '⚪'} ${NS.esc(p.name)}</span>
+                <div>
+                    <button data-sw="${i}" style="background:#22c55e;border:none;color:#fff;padding:2px 6px;border-radius:3px;cursor:pointer;font-size:9px;margin-right:3px;">تبديل</button>
+                    <button data-del="${i}" style="background:#ef4444;border:none;color:#fff;padding:2px 6px;border-radius:3px;cursor:pointer;font-size:9px;">حذف</button>
+                </div>
+            </div>
+        `).join('');
+        el.querySelectorAll('[data-sw]').forEach(b => b.onclick = () => NS.switchProfile(+b.dataset.sw));
+        el.querySelectorAll('[data-del]').forEach(b => b.onclick = () => NS.deleteProfile(+b.dataset.del));
+    };
+
+    NS.renderChart = function () {
+        const cv = document.getElementById('b11-chart');
+        if (!cv) return;
+        const ctx = cv.getContext('2d');
+        const W = cv.width, H = cv.height;
+        ctx.clearRect(0, 0, W, H);
+        const last7 = NS.stats.history.slice(-7);
+        if (last7.length === 0) {
+            ctx.fillStyle = '#64748b';
+            ctx.font = '12px sans-serif';
+            ctx.fillText('لا توجد بيانات', 10, H / 2);
+            return;
+        }
+        const max = Math.max(...last7.map(h => (h.likes || 0) + (h.follows || 0)), 10);
+        const bw = W / last7.length;
+        last7.forEach((h, i) => {
+            const lh = ((h.likes || 0) / max) * (H - 30);
+            const fh = ((h.follows || 0) / max) * (H - 30);
+            const x = i * bw + 4;
+            ctx.fillStyle = '#ef4444';
+            ctx.fillRect(x, H - 20 - lh, bw / 2 - 2, lh);
+            ctx.fillStyle = '#0085ff';
+            ctx.fillRect(x + bw / 2, H - 20 - fh, bw / 2 - 2, fh);
+            ctx.fillStyle = '#64748b';
+            ctx.font = '9px sans-serif';
+            ctx.fillText(h.d.slice(5), x, H - 6);
+        });
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(6, 6, 8, 8);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.font = '9px sans-serif';
+        ctx.fillText('إعجاب', 18, 13);
+        ctx.fillStyle = '#0085ff';
+        ctx.fillRect(60, 6, 8, 8);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillText('متابعة', 72, 13);
+    };
+
+    NS.renderABReport = function () {
+        const el = document.getElementById('b11-ab-report');
+        if (!el) return;
+        const entries = Object.entries(NS.state.replyPerf || {})
+            .sort((a, b) => b[1].uses - a[1].uses).slice(0, 5);
+        if (entries.length === 0) {
+            el.innerText = 'لا توجد بيانات بعد';
+            return;
+        }
+        el.innerHTML = entries.map(([t, d]) =>
+            `<div>• "${NS.esc(t.slice(0, 20))}" — ${d.uses} استخدام</div>`
+        ).join('');
+    };
+
+    NS.renderMLReport = function () {
+        const el = document.getElementById('b11-ml-report');
+        if (!el) return;
+        const best = NS.getBestHour();
+        el.innerText = best.count > 0
+            ? `⏰ أفضل ساعة: ${best.hour}:00 (${best.count} فعل)`
+            : 'لا توجد بيانات';
+    };
+
+    console.log('📦 ui.js محمّل بنجاح');
+
 })();
