@@ -1,6 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
-   src/dom.js — أدوات DOM وكشف الأزرار
+   src/dom.js — أدوات DOM وكشف الأزرار (v1.0.6)
    يحتوي على: تحليل النصوص، كشف الأزرار، جمع العناصر
+   ✅ إصلاح اكتشاف أزرار "متابَع" بالعربية
    ═══════════════════════════════════════════════════════════ */
 
 (function () {
@@ -284,17 +285,33 @@
 
         const l = (btn.getAttribute('aria-label') || '').toLowerCase().trim();
         const t = (btn.innerText || '').trim().toLowerCase();
+        const tClean = t.replace(/[^\u0600-\u06FFa-z]/gi, '').trim();
 
-        const matchesFollow = t === 'follow' || t === 'follow back' ||
-                              t.startsWith('follow ') ||
-                              t === 'متابعة' || t === 'متابعة بالمقابل' ||
-                              t.includes('follow back') ||
-                              l === 'follow' || l.startsWith('follow ') ||
-                              l === 'متابعة' || l.includes('follow back');
+        const matchesFollow = 
+            t === 'follow' ||
+            t === 'follow back' ||
+            t.startsWith('follow ') ||
+            tClean === 'follow' ||
+            tClean === 'followback' ||
+            t === 'متابعة' ||
+            t === 'متابعة بالمقابل' ||
+            tClean === 'متابعة' ||
+            tClean === 'متابعةبالمقابل' ||
+            t.includes('follow back') ||
+            l === 'follow' ||
+            l.startsWith('follow ') ||
+            l === 'متابعة' ||
+            l.includes('follow back');
 
-        const matchesFollowing = t.includes('following') || t.includes('unfollow') ||
-                                 t === 'متابَع' || t.includes('إلغاء المتابعة') ||
-                                 l.includes('following') || l.includes('unfollow');
+        const matchesFollowing = 
+            t.includes('following') ||
+            t.includes('unfollow') ||
+            t === 'متابَع' ||
+            t.includes('إلغاء المتابعة') ||
+            tClean === 'following' ||
+            tClean === 'متابع' ||
+            l.includes('following') ||
+            l.includes('unfollow');
 
         return matchesFollow && !matchesFollowing;
     };
@@ -320,12 +337,45 @@
         return l.includes('unlike') || l.includes('إلغاء الإعجاب');
     };
 
+    /* ✅ v1.0.6: دالة شاملة لاكتشاف أزرار "متابَع" */
     NS.isAlreadyFollowing = function (btn) {
+        // 1) data-testid (الأدق)
         const tid = (btn.getAttribute('data-testid') || '').toLowerCase();
-        if (tid === 'unfollowbtn') return true;
+        if (tid === 'unfollowbtn' || tid === 'following-button') return true;
+        if (tid === 'followbtn' || tid === 'follow-button') return false;
+
+        // 2) aria-label
         const l = (btn.getAttribute('aria-label') || '').toLowerCase();
+
+        // 3) النص المرئي
         const t = (btn.innerText || '').trim().toLowerCase();
-        return l.includes('following') || l.includes('unfollow') || t === 'following';
+
+        // 4) النص بدون رموز (لإزالة ✓ أو أيقونات)
+        const tClean = t.replace(/[^\u0600-\u06FFa-z]/gi, '').trim();
+
+        // أزرار "متابَع" / "Following" / "Unfollow"
+        const isFollowing = 
+            l.includes('following') ||
+            l.includes('unfollow') ||
+            l.includes('إلغاء المتابعة') ||
+            t.includes('following') ||
+            t.includes('unfollow') ||
+            t.includes('إلغاء المتابعة') ||
+            tClean === 'following' ||
+            tClean === 'متابع' ||
+            tClean === 'unfollow' ||
+            t.includes('متابَع') ||
+            /^متابع/.test(tClean);
+
+        // أزرار "متابعة" (يجب ألا نطابقها)
+        const isFollowNotFollowing =
+            tClean === 'follow' ||
+            tClean === 'متابعة' ||
+            tClean === 'followback' ||
+            tClean === 'متابعةبالمقابل' ||
+            (l.includes('follow') && !l.includes('following') && !l.includes('unfollow'));
+
+        return isFollowing && !isFollowNotFollowing;
     };
 
     NS.isRepostButton = function (btn) {
@@ -464,6 +514,6 @@
         return null;
     };
 
-    console.log('📦 dom.js محمّل بنجاح');
+    console.log('📦 dom.js محمّل بنجاح - v1.0.6 (إصلاح الأزرار)');
 
 })();
