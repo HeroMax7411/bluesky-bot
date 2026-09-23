@@ -495,6 +495,23 @@
                 <div style="font-size:10px;color:#94a3b8;text-align:center;margin-top:4px;">
                     Sayed Alhlwani — v${NS.version}
                 </div>
+                            <div class="b11-section" style="border:1px solid #22c55e;background:linear-gradient(135deg,#0a1f12,#0d1a0f);">
+                <div class="b11-section-title" style="color:#22c55e;">🔄 تحديثات البوت</div>
+                <div style="font-size:11px;color:#cbd5e1;text-align:center;margin:4px 0;">
+                    الإصدار الحالي: <b style="color:#22c55e;">v${NS.version}</b>
+                </div>
+                <div id="b11-update-status" style="font-size:10px;color:#94a3b8;text-align:center;margin:6px 0;min-height:16px;">
+                    ✅ فحص تلقائي كل 24 ساعة
+                </div>
+                <button id="b11-check-update" class="b11-btn" style="background:linear-gradient(135deg,#22c55e,#16a34a);font-size:12px;padding:10px;">
+                    🔄 التحقق من التحديثات الآن
+                </button>
+                <label style="margin-top:6px;font-size:10px;">
+                    <input type="checkbox" id="b11-auto-update" ${NS.state.autoUpdateCheck !== false ? 'checked' : ''}> 
+                    فحص تلقائي كل 24 ساعة
+                </label>
+                <div id="b11-last-check" style="font-size:9px;color:#64748b;text-align:center;margin-top:4px;"></div>
+            </div>
             </div>
         </div>
 
@@ -728,6 +745,52 @@
         document.getElementById('b11-export-settings').onclick = NS.exportSettings;
         document.getElementById('b11-import-settings').onclick = () => {
             document.getElementById('b11-import-file').click();
+
+
+
+
+        // 🔄 أزرار التحديث
+        document.getElementById('b11-check-update').onclick = async () => {
+            const btn = document.getElementById('b11-check-update');
+            const status = document.getElementById('b11-update-status');
+            btn.disabled = true;
+            btn.innerText = '⏳ جاري الفحص...';
+            status.innerText = '⏳ جاري التحقق من GitHub...';
+            
+            const hasUpdate = await NS.checkForUpdate(false);
+            
+            btn.disabled = false;
+            btn.innerText = '🔄 التحقق من التحديثات الآن';
+            status.innerText = hasUpdate ? '🆕 تحديث متوفر!' : '✅ أنت تستخدم أحدث نسخة';
+            
+            // تحديث آخر وقت فحص
+            const lastCheckEl = document.getElementById('b11-last-check');
+            if (lastCheckEl) {
+                lastCheckEl.innerText = `آخر فحص: ${new Date().toLocaleString('ar-EG')}`;
+            }
+        };
+        
+        // حفظ تفضيل التحديث التلقائي
+        const autoUpdEl = document.getElementById('b11-auto-update');
+        if (autoUpdEl) {
+            autoUpdEl.onchange = e => {
+                NS.state.autoUpdateCheck = e.target.checked;
+                NS.saveSettings();
+            };
+        }
+        
+        // عرض آخر فحص
+        const lastCheckEl = document.getElementById('b11-last-check');
+        if (lastCheckEl) {
+            const last = parseInt(localStorage.getItem('bsky_bot_last_update_check') || '0', 10);
+            if (last > 0) {
+                lastCheckEl.innerText = `آخر فحص: ${new Date(last).toLocaleString('ar-EG')}`;
+            }
+        }
+
+
+
+            
         };
         document.getElementById('b11-import-file').onchange = e => {
             if (e.target.files[0]) NS.importSettings(e.target.files[0]);
