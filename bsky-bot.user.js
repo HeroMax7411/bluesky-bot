@@ -2,7 +2,7 @@
 // @name         بوت إدارة بلو سكاي v1.0.6 PRO
 // @name:en      Bluesky Bot Manager v1.0.6 PRO
 // @namespace    https://github.com/HeroMax7411/bluesky-bot
-// @version      1.0.6
+// @version      1.0.7
 // @description  بوت إدارة بلو سكاي الاحترافي - 30 ميزة متقدمة + دعم عربي كامل
 // @description:en Professional Bluesky bot - 30 advanced features + full Arabic support
 // @author       Sayed Alhlwani
