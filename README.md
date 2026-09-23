@@ -1,4 +1,3 @@
-```markdown
 <div align="center">
 
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0085ff&height=200&section=header&text=Bluesky%20Bot%20Manager&fontSize=50&fontColor=ffffff&animation=fadeIn&fontAlignY=35&desc=v1.0.9%20PRO%20—%20بوت%20إدارة%20بلو%20سكاي&descAlignY=60&descSize=20" width="100%" />
@@ -184,19 +183,7 @@
 
 <div align="center">
 
-```
-1️⃣ افتح bsky.app + سجّل الدخول
-   ⬇️
-2️⃣ ستظهر لوحة البوت تلقائياً (أو اضغط Shift+B)
-   ⬇️
-3️⃣ فعّل 🧪 وضع التجربة (Dry Run)
-   ⬇️
-4️⃣ اختر المميزات من تبويب "🎯 تفاعل"
-   ⬇️
-5️⃣ راقب "📜 سجل" — تأكد من عدم وجود أخطاء
-   ⬇️
-6️⃣ اطفئ Dry Run — البوت يعمل! 🎉
-```
+
 
 </div>
 
@@ -223,20 +210,9 @@
 
 ### 🎯 تبويب "تفاعل"
 
-```
-┌─────────────────────────────────────┐
-│  🎯 التفاعل العام                   │
-├─────────────────────────────────────┤
-│  ☑ إعجاب تلقائي                     │
-│  ☑ متابعة تلقائية                   │
-│  ☑ إعادة نشر                        │
-│  ☑ رد تلقائي عام  ← للإجابة على أي  │
-│     منشور تلقائياً                  │
-│  ☐ 🧪 وضع التجربة  ← اطفئه للتنفيذ  │
-│  ☑ تمرير تلقائي                     │
-│  ☑ تنقّل آلي                        │
-└─────────────────────────────────────┘
-```
+
+
+
 
 ### 🛡️ تبويب "فلاتر"
 
@@ -301,13 +277,7 @@
 
 ### 🎯 الإعدادات المثالية للمبتدئين
 
-```
-✅ إعجاب: 100/يوم
-✅ متابعة: 50/يوم  
-✅ ردود: 50/يوم
-✅ جدولة: 9ص - 11م
-✅ استراحة: كل 15-25 عملية
-```
+
 
 ---
 
@@ -430,15 +400,8 @@
 
 هذا المشروع مرخّص تحت **MIT License** — انظر ملف [LICENSE](LICENSE) للتفاصيل.
 
-```
-MIT License
 
-Copyright (c) 2026 Sayed Alhlwani
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction...
-```
 
 ---
 
@@ -475,6 +438,4 @@ in the Software without restriction...
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0085ff&height=120&section=footer" width="100%" />
 
 </div>
-```
 
----
