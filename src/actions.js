@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
-   src/actions.js — الإجراءات التلقائية
-   يحتوي على: الجلسة، النشر، الردود، الإعجاب، المتابعة، إلغاء المتابعة
+   src/actions.js — الإجراءات التلقائية (v1.0.7)
+   ✅ إصلاح: البحث الصحيح عن handle في doCleanupNonFollowers
    ═══════════════════════════════════════════════════════════ */
 
 (function () {
@@ -17,7 +17,6 @@
         const pass = NS.getDecryptedPass();
         if (!pass) throw new Error('لا توجد كلمة مرور');
 
-        // إذا كانت الجلسة صالحة
         if (NS.sessionCache.accessJwt && Date.now() < NS.sessionCache.expiresAt) {
             return NS.sessionCache;
         }
@@ -107,25 +106,19 @@
             let s = await NS.getSession();
             let text = post.text || '';
 
-            // إضافة الطقس
             if (NS.state.weatherPosts) {
                 const w = await NS.fetchWeather();
                 if (w) text += `\n\n🌤️ ${NS.state.weatherCity}: ${w.temp}°C ${w.desc}`;
             }
-
-            // إضافة الأحداث العالمية
             if (NS.state.worldEvents) {
                 const ev = NS.getWorldEvent();
                 if (ev) text = ev + '\n\n' + text;
             }
-
-            // إضافة الهاشتاجات
             if (NS.state.autoHashtags) {
                 const tags = NS.generateHashtags(text);
                 if (tags && !text.includes('#')) text += ' ' + tags;
             }
 
-            // رفع الوسائط
             let embed = null;
             if (post.mediaBlob) {
                 try {
@@ -143,7 +136,6 @@
                 }
             }
 
-            // إنشاء المنشور
             const record = {
                 $type: 'app.bsky.feed.post',
                 text: text,
@@ -165,7 +157,6 @@
                 })
             });
 
-            // إذا انتهى التوكن، جدّد وأعد المحاولة
             if (postRes.status === 401) {
                 s = await NS.refreshSession();
                 postRes = await fetch('https://bsky.social/xrpc/com.atproto.repo.createRecord', {
@@ -197,7 +188,6 @@
         }
     };
 
-    /* ════════════════ فحص المنشورات المجدولة ════════════════ */
     NS.checkScheduledPosts = function () {
         const now = Date.now();
         NS.state.scheduledPosts.forEach(p => {
@@ -211,7 +201,6 @@
         });
     };
 
-    /* ════════════════ فحص تقويم المحتوى ════════════════ */
     NS.checkContentCalendar = function () {
         if (!NS.state.calendarEnabled) return;
         const now = new Date();
@@ -439,7 +428,6 @@
             NS.fire(t.btn);
             if (!await NS.sleepGen(NS.rand(2000, 3000), myGen)) return count;
 
-            // تأكيد من القائمة المنسدلة
             const confirm = Array.from(document.querySelectorAll('[role="menuitem"], button'))
                 .find(b => {
                     const txt = (b.innerText || '').trim().toLowerCase();
@@ -468,11 +456,15 @@
         while (Date.now() - start < maxWaitMs) {
             if (myGen !== NS.loopGeneration) return null;
 
-            const confirm = Array.from(document.querySelectorAll('button, [role="button"]'))
+            const confirm = Array.from(document.querySelectorAll('button, [role="button"], [role="menuitem"]'))
                 .find(b => {
                     if (NS.isInsidePanel(b)) return false;
                     const t = (b.innerText || '').trim().toLowerCase();
-                    return t === 'unfollow' || t === 'إلغاء المتابعة';
+                    const l = (b.getAttribute('aria-label') || '').toLowerCase();
+                    return t === 'unfollow' ||
+                           t === 'إلغاء المتابعة' ||
+                           l.includes('unfollow') ||
+                           l.includes('إلغاء المتابعة');
                 });
 
             if (confirm) return confirm;
@@ -481,46 +473,76 @@
         return null;
     };
 
-    /* ════════════════ ✅ إلغاء متابعة غير المتابعين (مُصلح) ════════════════ */
+    /* ═══════════════════════════════════════════════════════════
+       ✅ إصلاح v1.0.7: البحث عن handle بنفس منطق collectAllFollowButtons
+       ═══════════════════════════════════════════════════════════ */
     NS.doCleanupNonFollowers = async function (myGen) {
-        // ✅ إصلاح: Bluesky يستخدم /follows وليس /following
+        // دعم /follows و /following
         if (!/\/profile\/[^/]+\/(follows|following)/.test(location.pathname)) {
             return 0;
         }
         if (!NS.state.autoUnfollow) return 0;
 
         if (NS.state.knownFollowers.length === 0) {
-            NS.pushLog('cleanup', '⚠️ زُر /followers أولاً لجمع قائمة المتابعين');
+            NS.pushLog('cleanup', '⚠️ زُر /followers أولاً');
             return 0;
         }
 
         const followers = new Set(NS.state.knownFollowers);
-        NS.pushLog('cleanup', `🔍 فحص ${followers.size} متابع...`);
 
-        // جمع كل أزرار "متابَع"
-        const btns = Array.from(document.querySelectorAll('button, [role="button"]'))
-            .filter(b => !NS.isInsidePanel(b) && NS.isAlreadyFollowing(b));
+        /* ✅ الإصلاح الرئيسي: جمع الأزرار بنفس طريقة collectAllFollowButtons
+           — البحث عن الحاوية صعوداً حتى 12 مستوى — */
+        const buttonsData = [];
+        const seen = new Set();
+        const allBtns = document.querySelectorAll('button, [role="button"]');
 
-        NS.pushLog('cleanup', `📋 وجدت ${btns.length} زر متابعة في الصفحة`);
+        for (const btn of allBtns) {
+            if (NS.isInsidePanel(btn)) continue;
+            if (!NS.isAlreadyFollowing(btn)) continue;
 
-        let n = 0;
-        for (const btn of btns) {
+            // ✅ ابحث صعوداً حتى تجد رابط البروفايل (نفس collectAllFollowButtons)
+            let container = btn;
+            let found = false;
+            for (let i = 0; i < 15 && container; i++) {
+                if (container.querySelector && container.querySelector('a[href^="/profile/"]')) {
+                    found = true;
+                    break;
+                }
+                container = container.parentElement;
+            }
+            if (!found || !container) continue;
+
+            const h = NS.getHandleFromContainer(container);
+            if (!h || seen.has(h)) continue;
+
+            seen.add(h);
+            buttonsData.push({ btn, container, handle: h });
+        }
+
+        NS.pushLog('cleanup', `📋 وجدت ${buttonsData.length} زر "متابَع" (لديك ${followers.size} متابع)`);
+
+        if (buttonsData.length === 0) {
+            return 0;
+        }
+
+        let n = 0, skipped = 0, failed = 0;
+
+        for (const item of buttonsData) {
             if (myGen !== NS.loopGeneration) return n;
             if (!NS.rateCheck()) {
                 NS.pushLog('cleanup', '⏸️ تم الوصول لحد المعدل');
                 break;
             }
 
-            const c = btn.closest('[role="article"]') || btn.closest('div');
-            const h = NS.getHandleFromContainer(c);
-            if (!h) continue;
+            const h = item.handle;
 
-            // ✅ إذا كان الحساب يتابعك → تجاهله
+            // ✅ إذا كان الحساب يتابعك → تخطّاه
             if (followers.has(h)) {
-                NS.pushLog('cleanup-skip', `✅ ${h} يتابعك - تخطّي`);
+                skipped++;
                 continue;
             }
-            // ✅ إذا كنا قد ألغينا متابعته سابقاً → تجاهله
+
+            // ✅ إذا كنا قد ألغينا متابعته سابقاً → تخطّاه
             if (NS.state.unfollowedUsers.includes(h)) continue;
 
             if (NS.state.dryRun) {
@@ -528,28 +550,43 @@
                 continue;
             }
 
-            // إلغاء المتابعة
-            NS.fire(btn);
-            const confirm = await NS.waitForConfirmModal(5000, myGen);
+            // تمرير إلى الزر
+            item.btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+            if (!await NS.sleepGen(NS.rand(500, 1000), myGen)) return n;
+
+            // ✅ المرحلة 1: اضغط على الزر
+            NS.rateRecord();
+            NS.fire(item.btn);
+
+            // ✅ المرحلة 2: انتظر ظهور خيار الإلغاء
+            let confirm = null;
+            let waitMs = 0;
+            while (waitMs < 5000 && !confirm) {
+                if (myGen !== NS.loopGeneration) return n;
+                await NS.sleep(200);
+                waitMs += 200;
+                confirm = await NS.waitForConfirmModal(100, myGen);
+            }
 
             if (confirm) {
-                NS.rateRecord();
+                await NS.sleepGen(NS.rand(300, 600), myGen);
                 NS.fire(confirm);
+                await NS.sleepGen(NS.rand(1500, 2500), myGen);
+
                 NS.bumpStat('unfollows');
                 NS.state.unfollowedUsers.push(h);
                 NS.pushLog('cleanup-unfollow', `🧹 ألغيت: ${h}`);
                 n++;
             } else {
-                NS.pushLog('cleanup-fail', `⚠️ لم يظهر تأكيد لـ ${h}`);
+                failed++;
+                NS.pushLog('cleanup-fail', `⚠️ ${h} - لم تظهر النافذة`);
             }
 
-            if (!await NS.sleepGen(NS.rand(2500, 4500), myGen)) return n;
+            if (!await NS.sleepGen(NS.rand(1500, 3000), myGen)) return n;
         }
 
-        if (n) {
-            NS.saveSettings();
-            NS.pushLog('cleanup', `✅ ألغيت متابعة ${n} حساب`);
-        }
+        NS.pushLog('cleanup', `📊 النتيجة: ألغيت ${n} | تخطّيت ${skipped} | فشل ${failed}`);
+        if (n) NS.saveSettings();
         return n;
     };
 
@@ -601,14 +638,13 @@
                 continue;
             }
 
-            // اختيار الرد
             let pool;
             if (NS.state.sentimentAnalysis) {
                 const sent = NS.analyzeSentiment(txt);
                 pool = sent === 'positive'
                     ? String(NS.state.customReplyText || '').split('\n').filter(Boolean)
                     : sent === 'negative'
-                        ? ["أتمنى لك الأفضل 💙", "الله يعينك 🙏", "بالتوفيق 🌟"]
+                        ? ["أتمنى لك الأفضل 💙", "الله يعينك 🙏"]
                         : String(NS.state.customReplyText || '').split('\n').filter(Boolean);
             } else {
                 pool = String(NS.state.customReplyText || '').split('\n').map(s => s.trim()).filter(Boolean);
@@ -807,10 +843,8 @@
         try {
             const url = `/profile/${handle}`;
             if (location.pathname !== url) {
-                // ✅ إصلاح: push بدل unshift (نهاية الطابور)
                 NS.state.engagerQueue.push(handle);
 
-                // ✅ حد أقصى 3 محاولات
                 if (!NS.state.engagerAttempts) NS.state.engagerAttempts = {};
                 NS.state.engagerAttempts[handle] = (NS.state.engagerAttempts[handle] || 0) + 1;
 
@@ -822,7 +856,6 @@
                 return 0;
             }
 
-            // وصلنا للصفحة → احذف المحاولات
             if (NS.state.engagerAttempts && NS.state.engagerAttempts[handle]) {
                 delete NS.state.engagerAttempts[handle];
             }
@@ -890,7 +923,6 @@
 
         if (handles.size === 0) return;
 
-        // أول مرة: احفظ فقط
         if (NS.state.knownFollowers.length === 0) {
             NS.state.knownFollowers = Array.from(handles).slice(-2000);
             NS.forceSaveSettings();
@@ -898,7 +930,6 @@
             return;
         }
 
-        // ابحث عن من ألغى متابعتك
         const prev = new Set(NS.state.knownFollowers);
         const lost = Array.from(prev).filter(h => !handles.has(h));
         if (lost.length > 0 && prev.size > 0) {
@@ -908,9 +939,8 @@
         const merged = new Set([...NS.state.knownFollowers, ...handles]);
         NS.state.knownFollowers = Array.from(merged).slice(-2000);
         NS.forceSaveSettings();
-        NS.pushLog('tracker', `👥 متابون معروفون: ${NS.state.knownFollowers.length}`);
     };
 
-    console.log('📦 actions.js محمّل بنجاح');
+    console.log('📦 actions.js محمّل بنجاح - v1.0.7');
 
 })();
