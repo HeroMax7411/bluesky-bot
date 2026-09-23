@@ -1,20 +1,44 @@
+/* ═══════════════════════════════════════════════════════════
+   src/actions.js — الإجراءات التلقائية
+   يحتوي على: الجلسة، النشر، الردود، الإعجاب، المتابعة، إلغاء المتابعة
+   ═══════════════════════════════════════════════════════════ */
+
 (function () {
     'use strict';
-    const NS = window.__BSKY;
-    if (!NS) return;
 
-    /* ════════════════ Session Management ════════════════ */
+    const NS = window.__BSKY;
+    if (!NS) {
+        console.error('❌ actions.js: يجب تحميل core.js و dom.js أولاً');
+        return;
+    }
+
+    /* ════════════════ إدارة الجلسة ════════════════ */
     NS.getSession = async function () {
         const pass = NS.getDecryptedPass();
         if (!pass) throw new Error('لا توجد كلمة مرور');
-        if (NS.sessionCache.accessJwt && Date.now() < NS.sessionCache.expiresAt) return NS.sessionCache;
+
+        // إذا كانت الجلسة صالحة
+        if (NS.sessionCache.accessJwt && Date.now() < NS.sessionCache.expiresAt) {
+            return NS.sessionCache;
+        }
+
         const loginRes = await fetch('https://bsky.social/xrpc/com.atproto.server.createSession', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ identifier: NS.state.myHandle || 'sayed1993.bsky.social', password: pass })
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                identifier: NS.state.myHandle || 'sayed1993.bsky.social',
+                password: pass
+            })
         });
         if (!loginRes.ok) throw new Error('فشل تسجيل الدخول');
+
         const s = await loginRes.json();
-        NS.sessionCache = { accessJwt: s.accessJwt, refreshJwt: s.refreshJwt, did: s.did, expiresAt: Date.now() + 100 * 60 * 1000 };
+        NS.sessionCache = {
+            accessJwt: s.accessJwt,
+            refreshJwt: s.refreshJwt,
+            did: s.did,
+            expiresAt: Date.now() + 100 * 60 * 1000
+        };
         return NS.sessionCache;
     };
 
@@ -22,11 +46,17 @@
         if (!NS.sessionCache.refreshJwt) return NS.getSession();
         try {
             const res = await fetch('https://bsky.social/xrpc/com.atproto.server.refreshSession', {
-                method: 'POST', headers: { 'Authorization': `Bearer ${NS.sessionCache.refreshJwt}` }
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${NS.sessionCache.refreshJwt}` }
             });
             if (!res.ok) throw new Error('refresh failed');
             const s = await res.json();
-            NS.sessionCache = { accessJwt: s.accessJwt, refreshJwt: s.refreshJwt, did: s.did, expiresAt: Date.now() + 100 * 60 * 1000 };
+            NS.sessionCache = {
+                accessJwt: s.accessJwt,
+                refreshJwt: s.refreshJwt,
+                did: s.did,
+                expiresAt: Date.now() + 100 * 60 * 1000
+            };
             return NS.sessionCache;
         } catch (e) {
             NS.sessionCache = { accessJwt: null, refreshJwt: null, did: null, expiresAt: 0 };
@@ -34,47 +64,68 @@
         }
     };
 
+    /* ════════════════ رفع الوسائط ════════════════ */
     NS.uploadBlob = async function (accessJwt, file) {
         if (!file || !(file instanceof Blob)) throw new Error('ملف غير صالح');
         if (file.size > 100 * 1024 * 1024) throw new Error('الملف أكبر من 100 MB');
+
         const buf = await file.arrayBuffer();
         let res = await fetch('https://bsky.social/xrpc/com.atproto.repo.uploadBlob', {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${accessJwt}`, 'Content-Type': file.type || 'application/octet-stream' },
+            headers: {
+                'Authorization': `Bearer ${accessJwt}`,
+                'Content-Type': file.type || 'application/octet-stream'
+            },
             body: buf
         });
+
         if (res.status === 401) {
             const s = await NS.refreshSession();
             res = await fetch('https://bsky.social/xrpc/com.atproto.repo.uploadBlob', {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${s.accessJwt}`, 'Content-Type': file.type || 'application/octet-stream' },
+                headers: {
+                    'Authorization': `Bearer ${s.accessJwt}`,
+                    'Content-Type': file.type || 'application/octet-stream'
+                },
                 body: buf
             });
         }
         if (!res.ok) throw new Error('فشل رفع الوسائط: HTTP ' + res.status);
         const j = await res.json();
+        if (!j.blob) throw new Error('استجابة غير صالحة من الخادم');
         return j.blob;
     };
 
-    /* ════════════════ Publish ════════════════ */
+    /* ════════════════ نشر منشور مجدول ════════════════ */
     NS.publishScheduledPost = async function (post) {
         const pass = NS.getDecryptedPass();
-        if (!pass) { NS.pushLog('post-fail', '❌ لا توجد كلمة مرور'); return false; }
+        if (!pass) {
+            NS.pushLog('post-fail', '❌ لا توجد كلمة مرور');
+            return false;
+        }
         try {
             let s = await NS.getSession();
             let text = post.text || '';
+
+            // إضافة الطقس
             if (NS.state.weatherPosts) {
                 const w = await NS.fetchWeather();
                 if (w) text += `\n\n🌤️ ${NS.state.weatherCity}: ${w.temp}°C ${w.desc}`;
             }
+
+            // إضافة الأحداث العالمية
             if (NS.state.worldEvents) {
                 const ev = NS.getWorldEvent();
                 if (ev) text = ev + '\n\n' + text;
             }
+
+            // إضافة الهاشتاجات
             if (NS.state.autoHashtags) {
                 const tags = NS.generateHashtags(text);
                 if (tags && !text.includes('#')) text += ' ' + tags;
             }
+
+            // رفع الوسائط
             let embed = null;
             if (post.mediaBlob) {
                 try {
@@ -82,83 +133,140 @@
                     if (post.mediaType === 'video') {
                         embed = { $type: 'app.bsky.embed.video', video: blob };
                     } else {
-                        embed = { $type: 'app.bsky.embed.images', images: [{ image: blob, alt: post.mediaAlt || '' }] };
+                        embed = {
+                            $type: 'app.bsky.embed.images',
+                            images: [{ image: blob, alt: post.mediaAlt || '' }]
+                        };
                     }
-                } catch(e) { console.warn('media upload failed', e); }
+                } catch (e) {
+                    console.warn('media upload failed', e);
+                }
             }
-            const record = { $type: 'app.bsky.feed.post', text, createdAt: new Date().toISOString(), langs: [NS.state.languageFilter || 'ar'] };
+
+            // إنشاء المنشور
+            const record = {
+                $type: 'app.bsky.feed.post',
+                text: text,
+                createdAt: new Date().toISOString(),
+                langs: [NS.state.languageFilter || 'ar']
+            };
             if (embed) record.embed = embed;
 
             let postRes = await fetch('https://bsky.social/xrpc/com.atproto.repo.createRecord', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${s.accessJwt}` },
-                body: JSON.stringify({ repo: s.did, collection: 'app.bsky.feed.post', record })
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${s.accessJwt}`
+                },
+                body: JSON.stringify({
+                    repo: s.did,
+                    collection: 'app.bsky.feed.post',
+                    record: record
+                })
             });
+
+            // إذا انتهى التوكن، جدّد وأعد المحاولة
             if (postRes.status === 401) {
                 s = await NS.refreshSession();
                 postRes = await fetch('https://bsky.social/xrpc/com.atproto.repo.createRecord', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${s.accessJwt}` },
-                    body: JSON.stringify({ repo: s.did, collection: 'app.bsky.feed.post', record })
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${s.accessJwt}`
+                    },
+                    body: JSON.stringify({
+                        repo: s.did,
+                        collection: 'app.bsky.feed.post',
+                        record: record
+                    })
                 });
             }
             if (!postRes.ok) throw new Error('فشل النشر: HTTP ' + postRes.status);
-            NS.bumpStat('posts'); NS.dailyIncrement('posts');
+
+            NS.bumpStat('posts');
+            NS.dailyIncrement('posts');
             NS.pushLog('post', `✅ "${text.slice(0, 40)}..."`);
             NS.notify('تم النشر', text.slice(0, 40));
             return true;
+
         } catch (err) {
             NS.pushLog('post-fail', `❌ ${err.message}`);
+            NS.notify('فشل النشر', err.message);
             NS.captureError(err, 'publishScheduledPost');
             return false;
         }
     };
 
+    /* ════════════════ فحص المنشورات المجدولة ════════════════ */
     NS.checkScheduledPosts = function () {
         const now = Date.now();
         NS.state.scheduledPosts.forEach(p => {
             if (p.posted || p.time > now) return;
             NS.publishScheduledPost(p).then(ok => {
-                if (ok) { p.posted = true; NS.forceSaveSettings(); }
+                if (ok) {
+                    p.posted = true;
+                    NS.forceSaveSettings();
+                }
             });
         });
     };
 
+    /* ════════════════ فحص تقويم المحتوى ════════════════ */
     NS.checkContentCalendar = function () {
         if (!NS.state.calendarEnabled) return;
         const now = new Date();
         const hour = now.getHours();
-        const dayNames = ['sun','mon','tue','wed','thu','fri','sat'];
+        const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
         const dayKey = dayNames[now.getDay()];
         const content = NS.state.calendar[dayKey];
         if (!content) return;
+
         const todayKey = `${NS.todayStr()}_calendar_${dayKey}`;
         if (NS.state.processedPosts.includes(todayKey)) return;
         if (hour !== 10) return;
+
         NS.publishScheduledPost({ text: content }).then(ok => {
-            if (ok) { NS.state.processedPosts.push(todayKey); NS.forceSaveSettings(); }
+            if (ok) {
+                NS.state.processedPosts.push(todayKey);
+                NS.forceSaveSettings();
+            }
         });
     };
 
-    /* ════════════════ Follow Back ════════════════ */
+    /* ════════════════ رد المتابعة ════════════════ */
     NS.doFollowBack = async function (myGen) {
         if (!location.pathname.includes('/notifications')) return 0;
-        if (!NS.dailyCheck('followBacks')) return 0;
+        if (!NS.dailyCheck('followBacks')) {
+            NS.pushLog('limit', '⛔ حد رد المتابعة');
+            return 0;
+        }
+
         const targets = NS.collectAllFollowButtons();
         NS.updateDebugInfo('follow', targets.length);
+
         let count = 0;
         for (const t of targets) {
             if (myGen !== NS.loopGeneration) return count;
             if (!NS.rateCheck()) break;
             if (NS.state.processedFollowBacks.includes(t.handle)) continue;
-            if (NS.state.dryRun) { NS.pushLog('dry', `رد متابعة: ${t.handle}`); continue; }
+
+            if (NS.state.dryRun) {
+                NS.pushLog('dry', `رد متابعة: ${t.handle}`);
+                continue;
+            }
+
             t.btn.scrollIntoView({ block: 'center', behavior: 'instant' });
             if (!await NS.sleepGen(NS.rand(700, 1500), myGen)) return count;
-            NS.rateRecord(); NS.fire(t.btn);
+
+            NS.rateRecord();
+            NS.fire(t.btn);
             if (!await NS.sleepGen(NS.rand(2000, 3000), myGen)) return count;
+
             if (!NS.isFollowButton(t.btn) || NS.isAlreadyFollowing(t.btn)) {
                 NS.state.processedFollowBacks.push(t.handle);
-                NS.bumpStat('followBacks'); NS.dailyIncrement('followBacks'); count++;
+                NS.bumpStat('followBacks');
+                NS.dailyIncrement('followBacks');
+                count++;
                 NS.pushLog('follow-back', `🔄 ${t.handle}`);
                 NS.notify('رد متابعة', `تابعت ${t.handle}`);
             } else {
@@ -170,27 +278,39 @@
         return count;
     };
 
-    /* ════════════════ Like Commenters ════════════════ */
+    /* ════════════════ إعجاب المعلّقين ════════════════ */
     NS.doLikeCommenters = async function (myGen) {
         const onN = location.pathname.includes('/notifications');
         const onP = /\/profile\/[^/]+/.test(location.pathname);
         if (!onN && !onP) return 0;
         if (!NS.dailyCheck('commentLikes')) return 0;
+
         const targets = NS.collectAllLikeButtons();
         NS.updateDebugInfo('like', targets.length);
+
         let count = 0;
         for (const t of targets) {
             if (myGen !== NS.loopGeneration) return count;
             if (!NS.rateCheck()) break;
             if (NS.state.processedCommentLikes.includes(t.key)) continue;
-            if (NS.state.dryRun) { NS.pushLog('dry', `إعجاب`); continue; }
+
+            if (NS.state.dryRun) {
+                NS.pushLog('dry', `إعجاب معلّق`);
+                continue;
+            }
+
             t.btn.scrollIntoView({ block: 'center', behavior: 'instant' });
             if (!await NS.sleepGen(NS.rand(700, 1400), myGen)) return count;
-            NS.rateRecord(); NS.fire(t.btn);
+
+            NS.rateRecord();
+            NS.fire(t.btn);
             if (!await NS.sleepGen(NS.rand(1500, 2500), myGen)) return count;
+
             if (NS.isAlreadyLiked(t.btn)) {
                 NS.state.processedCommentLikes.push(t.key);
-                NS.bumpStat('commentLikes'); NS.dailyIncrement('commentLikes'); count++;
+                NS.bumpStat('commentLikes');
+                NS.dailyIncrement('commentLikes');
+                count++;
                 NS.pushLog('comment-like', `❤️ ${t.key.slice(0, 40)}`);
             } else {
                 NS.state.processedCommentLikes.push(t.key);
@@ -201,26 +321,42 @@
         return count;
     };
 
-    /* ════════════════ Auto Like ════════════════ */
+    /* ════════════════ الإعجاب العام ════════════════ */
     NS.doAutoLike = async function (myGen) {
         if (Math.random() * 100 > NS.state.likeRatio) return 0;
-        if (!NS.dailyCheck('likes')) return 0;
+        if (!NS.dailyCheck('likes')) {
+            NS.pushLog('limit', '⛔ حد الإعجاب');
+            return 0;
+        }
+
         const targets = NS.collectAllLikeButtons();
         NS.updateDebugInfo('like', targets.length);
+
         let count = 0;
         for (const t of targets) {
             if (myGen !== NS.loopGeneration) return count;
             if (!NS.rateCheck()) break;
             if (NS.state.processedLikes.includes(t.key)) continue;
+
             t.btn.scrollIntoView({ block: 'center', behavior: 'instant' });
             if (!await NS.sleepGen(NS.rand(700, 1400), myGen)) return count;
-            if (NS.state.dryRun) { NS.pushLog('dry', `إعجاب`); continue; }
-            NS.rateRecord(); NS.fire(t.btn);
+
+            if (NS.state.dryRun) {
+                NS.pushLog('dry', `إعجاب`);
+                continue;
+            }
+
+            NS.rateRecord();
+            NS.fire(t.btn);
             if (!await NS.sleepGen(NS.rand(1500, 2500), myGen)) return count;
+
             if (NS.isAlreadyLiked(t.btn)) {
                 NS.state.processedLikes.push(t.key);
-                NS.bumpStat('likes'); NS.dailyIncrement('likes'); count++;
+                NS.bumpStat('likes');
+                NS.dailyIncrement('likes');
+                count++;
                 NS.pushLog('like', `✅ ${t.key.slice(0, 50)}`);
+                NS.state.lastClickResult = `✅ إعجاب`;
             } else {
                 NS.state.processedLikes.push(t.key);
                 NS.pushLog('like-fail', `❌ ${t.key.slice(0, 40)}`);
@@ -230,26 +366,41 @@
         return count;
     };
 
-    /* ════════════════ Auto Follow ════════════════ */
+    /* ════════════════ المتابعة العامة ════════════════ */
     NS.doAutoFollow = async function (myGen) {
         if (Math.random() * 100 > NS.state.followRatio) return 0;
-        if (!NS.dailyCheck('follows')) return 0;
+        if (!NS.dailyCheck('follows')) {
+            NS.pushLog('limit', '⛔ حد المتابعة');
+            return 0;
+        }
+
         const targets = NS.collectAllFollowButtons();
         NS.updateDebugInfo('follow', targets.length);
+
         let count = 0;
         for (const t of targets) {
             if (myGen !== NS.loopGeneration) return count;
             if (!NS.rateCheck()) break;
             if (NS.state.processedFollows.includes(t.handle)) continue;
             if (NS.state.autoFollowBack && location.pathname.includes('/notifications')) continue;
+
             t.btn.scrollIntoView({ block: 'center', behavior: 'instant' });
             if (!await NS.sleepGen(NS.rand(700, 1400), myGen)) return count;
-            if (NS.state.dryRun) { NS.pushLog('dry', `متابعة: ${t.handle}`); continue; }
-            NS.rateRecord(); NS.fire(t.btn);
+
+            if (NS.state.dryRun) {
+                NS.pushLog('dry', `متابعة: ${t.handle}`);
+                continue;
+            }
+
+            NS.rateRecord();
+            NS.fire(t.btn);
             if (!await NS.sleepGen(NS.rand(2000, 3200), myGen)) return count;
+
             if (NS.isAlreadyFollowing(t.btn)) {
                 NS.state.processedFollows.push(t.handle);
-                NS.bumpStat('follows'); NS.dailyIncrement('follows'); count++;
+                NS.bumpStat('follows');
+                NS.dailyIncrement('follows');
+                count++;
                 NS.pushLog('follow', `✅ ${t.handle}`);
             } else {
                 NS.state.processedFollows.push(t.handle);
@@ -260,59 +411,84 @@
         return count;
     };
 
-    /* ════════════════ Auto Repost ════════════════ */
+    /* ════════════════ إعادة النشر ════════════════ */
     NS.doAutoRepost = async function (myGen) {
         if (!NS.state.autoRepost) return 0;
-        if (!NS.dailyCheck('reposts')) return 0;
+        if (!NS.dailyCheck('reposts')) {
+            NS.pushLog('limit', '⛔ حد إعادة النشر');
+            return 0;
+        }
+
         const targets = NS.collectAllRepostButtons();
         let count = 0;
+
         for (const t of targets.slice(0, 3)) {
             if (myGen !== NS.loopGeneration) return count;
             if (!NS.rateCheck()) break;
             if (NS.state.processedReposts.includes(t.key)) continue;
-            if (NS.state.dryRun) { NS.pushLog('dry', `إعادة نشر`); continue; }
+
+            if (NS.state.dryRun) {
+                NS.pushLog('dry', `إعادة نشر`);
+                continue;
+            }
+
             t.btn.scrollIntoView({ block: 'center', behavior: 'instant' });
             if (!await NS.sleepGen(NS.rand(700, 1400), myGen)) return count;
-            NS.rateRecord(); NS.fire(t.btn);
+
+            NS.rateRecord();
+            NS.fire(t.btn);
             if (!await NS.sleepGen(NS.rand(2000, 3000), myGen)) return count;
+
+            // تأكيد من القائمة المنسدلة
             const confirm = Array.from(document.querySelectorAll('[role="menuitem"], button'))
                 .find(b => {
                     const txt = (b.innerText || '').trim().toLowerCase();
                     return txt === 'repost' || txt === 'إعادة نشر';
                 });
-            if (confirm) { NS.fire(confirm); await NS.sleepGen(1500, myGen); }
+            if (confirm) {
+                NS.fire(confirm);
+                await NS.sleepGen(1500, myGen);
+            }
+
             NS.state.processedReposts.push(t.key);
-            NS.bumpStat('reposts'); NS.dailyIncrement('reposts'); count++;
+            NS.bumpStat('reposts');
+            NS.dailyIncrement('reposts');
+            count++;
             NS.pushLog('repost', `🔄 ${t.key.slice(0, 40)}`);
         }
         if (count) NS.saveSettings();
         return count;
     };
 
-    /* ════════════════ Wait Confirm Modal ════════════════ */
-    NS.waitForConfirmModal = async function (maxWaitMs = 5000, myGen) {
+    /* ════════════════ انتظار نافذة التأكيد ════════════════ */
+    NS.waitForConfirmModal = async function (maxWaitMs, myGen) {
+        maxWaitMs = maxWaitMs || 5000;
         const start = Date.now();
+
         while (Date.now() - start < maxWaitMs) {
             if (myGen !== NS.loopGeneration) return null;
+
             const confirm = Array.from(document.querySelectorAll('button, [role="button"]'))
                 .find(b => {
                     if (NS.isInsidePanel(b)) return false;
                     const t = (b.innerText || '').trim().toLowerCase();
                     return t === 'unfollow' || t === 'إلغاء المتابعة';
                 });
+
             if (confirm) return confirm;
             await NS.sleep(200);
         }
         return null;
     };
 
-    /* ════════════════ ✅ Cleanup Non-Followers (إصلاح /follows) ════════════════ */
+    /* ════════════════ ✅ إلغاء متابعة غير المتابعين (مُصلح) ════════════════ */
     NS.doCleanupNonFollowers = async function (myGen) {
-        // ✅ الإصلاح: Bluesky يستخدم /follows وليس /following
+        // ✅ إصلاح: Bluesky يستخدم /follows وليس /following
         if (!/\/profile\/[^/]+\/(follows|following)/.test(location.pathname)) {
             return 0;
         }
         if (!NS.state.autoUnfollow) return 0;
+
         if (NS.state.knownFollowers.length === 0) {
             NS.pushLog('cleanup', '⚠️ زُر /followers أولاً لجمع قائمة المتابعين');
             return 0;
@@ -334,6 +510,7 @@
                 NS.pushLog('cleanup', '⏸️ تم الوصول لحد المعدل');
                 break;
             }
+
             const c = btn.closest('[role="article"]') || btn.closest('div');
             const h = NS.getHandleFromContainer(c);
             if (!h) continue;
@@ -354,8 +531,10 @@
             // إلغاء المتابعة
             NS.fire(btn);
             const confirm = await NS.waitForConfirmModal(5000, myGen);
+
             if (confirm) {
-                NS.rateRecord(); NS.fire(confirm);
+                NS.rateRecord();
+                NS.fire(confirm);
                 NS.bumpStat('unfollows');
                 NS.state.unfollowedUsers.push(h);
                 NS.pushLog('cleanup-unfollow', `🧹 ألغيت: ${h}`);
@@ -363,6 +542,7 @@
             } else {
                 NS.pushLog('cleanup-fail', `⚠️ لم يظهر تأكيد لـ ${h}`);
             }
+
             if (!await NS.sleepGen(NS.rand(2500, 4500), myGen)) return n;
         }
 
@@ -373,22 +553,27 @@
         return n;
     };
 
-    /* ════════════════ Reply to Notifications ════════════════ */
+    /* ════════════════ الردود على الإشعارات ════════════════ */
     NS.doReplyToNotifications = async function (myGen) {
         if (!location.pathname.includes('/notifications')) return 0;
         if (!NS.dailyCheck('notifReplies')) return 0;
+
         const notifications = document.querySelectorAll('[data-testid="notification"], [role="article"]');
         let count = 0;
+
         for (const n of notifications) {
             if (myGen !== NS.loopGeneration) return count;
             if (!NS.rateCheck()) break;
+
             const txt = (n.innerText || '').slice(0, 500);
             const type = NS.detectNotificationType(txt);
             if (type !== 'reply') continue;
+
             const key = txt.slice(0, 100);
             if (NS.state.processedNotifReplies.includes(key)) continue;
             if (NS.state.onlyArabic && !NS.isArabicText(txt)) continue;
             if (NS.containsBlacklisted(txt)) continue;
+
             const replyBtn = n.querySelector('[data-testid="replyBtn"]') ||
                 Array.from(n.querySelectorAll('button, [role="button"]')).find(b => {
                     const l = (b.getAttribute('aria-label') || '').toLowerCase();
@@ -396,37 +581,62 @@
                     return l.includes('reply') || t === 'رد';
                 });
             if (!replyBtn) continue;
-            if (NS.state.dryRun) { NS.pushLog('dry', `رد إشعار`); NS.state.processedNotifReplies.push(key); continue; }
+
+            if (NS.state.dryRun) {
+                NS.pushLog('dry', `رد إشعار`);
+                NS.state.processedNotifReplies.push(key);
+                continue;
+            }
+
             replyBtn.scrollIntoView({ block: 'center', behavior: 'instant' });
             if (!await NS.sleepGen(NS.rand(800, 1500), myGen)) return count;
-            NS.rateRecord(); NS.fire(replyBtn);
+
+            NS.rateRecord();
+            NS.fire(replyBtn);
             if (!await NS.sleepGen(NS.rand(2000, 3000), myGen)) return count;
+
             const editor = document.querySelector('div[contenteditable="true"][role="textbox"]');
-            if (!editor) { NS.state.processedNotifReplies.push(key); continue; }
+            if (!editor) {
+                NS.state.processedNotifReplies.push(key);
+                continue;
+            }
+
+            // اختيار الرد
             let pool;
             if (NS.state.sentimentAnalysis) {
                 const sent = NS.analyzeSentiment(txt);
                 pool = sent === 'positive'
                     ? String(NS.state.customReplyText || '').split('\n').filter(Boolean)
                     : sent === 'negative'
-                        ? ["أتمنى لك الأفضل 💙", "الله يعينك 🙏"]
+                        ? ["أتمنى لك الأفضل 💙", "الله يعينك 🙏", "بالتوفيق 🌟"]
                         : String(NS.state.customReplyText || '').split('\n').filter(Boolean);
             } else {
                 pool = String(NS.state.customReplyText || '').split('\n').map(s => s.trim()).filter(Boolean);
             }
-            let selected = pool.length > 0 ? pool[Math.floor(Math.random() * pool.length)] : "شكراً! 🙏";
+
+            let selected = pool.length > 0
+                ? pool[Math.floor(Math.random() * pool.length)]
+                : "شكراً! 🙏";
+
             selected = NS.applyTemplateVars(selected, { name: 'صديقي', post: txt });
             if (NS.state.autoHashtags) {
                 const tags = NS.generateHashtags(txt);
                 if (tags) selected += ' ' + tags;
             }
+
             NS.setInputValue(editor, selected);
             if (!await NS.sleepGen(NS.rand(1200, 2000), myGen)) return count;
+
             const send = Array.from(document.querySelectorAll('button'))
-                .find(b => ['reply','رد','post','نشر'].includes((b.innerText||'').trim().toLowerCase()) && !b.disabled);
+                .find(b => ['reply', 'رد', 'post', 'نشر']
+                    .includes((b.innerText || '').trim().toLowerCase()) && !b.disabled);
+
             if (send) {
-                NS.rateRecord(); NS.fire(send);
-                NS.bumpStat('notifReplies'); NS.dailyIncrement('notifReplies'); count++;
+                NS.rateRecord();
+                NS.fire(send);
+                NS.bumpStat('notifReplies');
+                NS.dailyIncrement('notifReplies');
+                count++;
                 NS.state.processedNotifReplies.push(key);
                 NS.pushLog('notif-reply', `✅`);
             }
@@ -436,44 +646,79 @@
         return count;
     };
 
-    /* ════════════════ Reply to Messages ════════════════ */
+    /* ════════════════ الردود على الرسائل ════════════════ */
     NS.doReplyToMessages = async function (myGen) {
         if (!location.pathname.includes('/messages')) return 0;
         if (!NS.dailyCheck('messages')) return 0;
+
         const convos = document.querySelectorAll('[data-testid="DMConversation"], [role="listitem"]');
         let count = 0;
+
         for (const c of convos) {
             if (myGen !== NS.loopGeneration) return count;
             if (!NS.rateCheck()) break;
+
             const txt = (c.innerText || '').slice(0, 300);
             const key = txt.slice(0, 80);
             if (NS.state.processedMessages.includes(key)) continue;
+
             NS.fire(c);
             if (!await NS.sleepGen(NS.rand(1500, 2500), myGen)) return count;
+
             const msgs = document.querySelectorAll('[data-testid="messageText"], .messageText, [role="article"]');
-            if (msgs.length === 0) { NS.state.processedMessages.push(key); continue; }
+            if (msgs.length === 0) {
+                NS.state.processedMessages.push(key);
+                continue;
+            }
+
             const last = msgs[msgs.length - 1];
             const msgTxt = (last.innerText || '').slice(0, 500);
-            if (NS.state.onlyArabic && !NS.isArabicText(msgTxt)) { NS.state.processedMessages.push(key); continue; }
-            if (NS.containsBlacklisted(msgTxt)) { NS.state.processedMessages.push(key); continue; }
+
+            if (NS.state.onlyArabic && !NS.isArabicText(msgTxt)) {
+                NS.state.processedMessages.push(key);
+                continue;
+            }
+            if (NS.containsBlacklisted(msgTxt)) {
+                NS.state.processedMessages.push(key);
+                continue;
+            }
+
             const editor = document.querySelector('div[contenteditable="true"][role="textbox"]') ||
                            document.querySelector('textarea[placeholder*="message" i]') ||
                            document.querySelector('textarea[placeholder*="رسالة" i]');
-            if (!editor) { NS.state.processedMessages.push(key); continue; }
-            if (NS.state.dryRun) { NS.pushLog('dry', `رد رسالة`); NS.state.processedMessages.push(key); continue; }
-            const pool = String(NS.state.messageReplyText || '').split('\n').map(s => s.trim()).filter(Boolean);
-            let selected = pool.length > 0 ? pool[Math.floor(Math.random() * pool.length)] : "شكراً 🙏";
+            if (!editor) {
+                NS.state.processedMessages.push(key);
+                continue;
+            }
+
+            if (NS.state.dryRun) {
+                NS.pushLog('dry', `رد رسالة`);
+                NS.state.processedMessages.push(key);
+                continue;
+            }
+
+            const pool = String(NS.state.messageReplyText || '')
+                .split('\n').map(s => s.trim()).filter(Boolean);
+            let selected = pool.length > 0
+                ? pool[Math.floor(Math.random() * pool.length)]
+                : "شكراً 🙏";
             selected = NS.applyTemplateVars(selected, { post: msgTxt });
+
             NS.setInputValue(editor, selected);
             if (!await NS.sleepGen(NS.rand(1200, 2000), myGen)) return count;
+
             const send = Array.from(document.querySelectorAll('button')).find(b => {
                 const l = (b.getAttribute('aria-label') || '').toLowerCase();
                 const t = (b.innerText || '').trim().toLowerCase();
                 return (l.includes('send') || t === 'send' || t === 'إرسال') && !b.disabled;
             });
+
             if (send) {
-                NS.rateRecord(); NS.fire(send);
-                NS.bumpStat('messageReplies'); NS.dailyIncrement('messages'); count++;
+                NS.rateRecord();
+                NS.fire(send);
+                NS.bumpStat('messageReplies');
+                NS.dailyIncrement('messages');
+                count++;
                 NS.state.processedMessages.push(key);
                 NS.pushLog('message-reply', `✅`);
             }
@@ -483,129 +728,189 @@
         return count;
     };
 
-    /* ════════════════ Auto Reply ════════════════ */
+    /* ════════════════ الرد العام ════════════════ */
     NS.doAutoReply = async function (myGen) {
         const btns = Array.from(document.querySelectorAll('[data-testid="replyBtn"], [data-testid*="reply" i]'))
             .filter(b => !NS.isInsidePanel(b));
-        if (!btns.length || !NS.rateCheck() || !NS.dailyCheck('replies')) return 0;
-        if (NS.state.dryRun) { NS.pushLog('dry', 'رد'); return 0; }
+        if (!btns.length) return 0;
+        if (!NS.rateCheck()) return 0;
+        if (!NS.dailyCheck('replies')) return 0;
+        if (NS.state.dryRun) {
+            NS.pushLog('dry', 'رد');
+            return 0;
+        }
+
         const btn = btns[Math.floor(Math.random() * Math.min(btns.length, 3))];
         const c = btn.closest('[role="article"]') || btn.closest('div');
+
         if (NS.state.onlyArabic && c) {
             const t = (c.innerText || '').slice(0, 800);
             if (!NS.isArabicText(t)) return 0;
         }
+
         let pool;
-        if (c && (NS.postHasVideo(c) || NS.postHasImage(c)))
+        if (c && (NS.postHasVideo(c) || NS.postHasImage(c))) {
             pool = String(NS.state.replyWithImage || '').split('\n').map(s => s.trim()).filter(Boolean);
-        else pool = String(NS.state.replyTextOnly || '').split('\n').map(s => s.trim()).filter(Boolean);
-        if (!pool.length) pool = String(NS.state.customReplyText || '').split('\n').map(s => s.trim()).filter(Boolean);
-        let selected = pool.length > 0 ? pool[Math.floor(Math.random() * pool.length)] : "منشور رائع! ✨";
+        } else {
+            pool = String(NS.state.replyTextOnly || '').split('\n').map(s => s.trim()).filter(Boolean);
+        }
+        if (!pool.length) {
+            pool = String(NS.state.customReplyText || '').split('\n').map(s => s.trim()).filter(Boolean);
+        }
+
+        let selected = pool.length > 0
+            ? pool[Math.floor(Math.random() * pool.length)]
+            : "منشور رائع! ✨";
+
         const postText = c ? (c.innerText || '').slice(0, 200) : '';
         selected = NS.applyTemplateVars(selected, { post: postText });
         if (NS.state.autoHashtags) {
             const tags = NS.generateHashtags(postText);
             if (tags) selected += ' ' + tags;
         }
+
         try {
-            NS.rateRecord(); NS.fire(btn);
+            NS.rateRecord();
+            NS.fire(btn);
             if (!await NS.sleepGen(NS.rand(2200, 3500), myGen)) return 0;
+
             const editor = document.querySelector('div[contenteditable="true"][role="textbox"]');
             if (!editor) return 0;
+
             NS.setInputValue(editor, selected);
             if (!await NS.sleepGen(NS.rand(1200, 2000), myGen)) return 0;
+
             const send = Array.from(document.querySelectorAll('button'))
-                .find(b => ['reply','رد','post','نشر'].includes((b.innerText||'').trim().toLowerCase()) && !b.disabled);
+                .find(b => ['reply', 'رد', 'post', 'نشر']
+                    .includes((b.innerText || '').trim().toLowerCase()) && !b.disabled);
+
             if (send) {
-                NS.rateRecord(); NS.fire(send);
-                NS.bumpStat('replies'); NS.dailyIncrement('replies');
+                NS.rateRecord();
+                NS.fire(send);
+                NS.bumpStat('replies');
+                NS.dailyIncrement('replies');
                 NS.pushLog('reply', `✅ "${selected.slice(0, 30)}"`);
                 return 1;
             }
-        } catch(e){}
+        } catch (e) {}
         return 0;
     };
 
-    /* ════════════════ Follow Engagers ════════════════ */
+    /* ════════════════ متابعة المتفاعلين ════════════════ */
     NS.doFollowEngagers = async function (myGen) {
         if (!NS.state.followEngagers || !NS.dailyCheck('engagerFollows')) return 0;
         if (NS.state.engagerQueue.length === 0) return 0;
+
         const handle = NS.state.engagerQueue.shift();
         NS.saveSettings();
+
         try {
             const url = `/profile/${handle}`;
             if (location.pathname !== url) {
+                // ✅ إصلاح: push بدل unshift (نهاية الطابور)
                 NS.state.engagerQueue.push(handle);
+
+                // ✅ حد أقصى 3 محاولات
                 if (!NS.state.engagerAttempts) NS.state.engagerAttempts = {};
                 NS.state.engagerAttempts[handle] = (NS.state.engagerAttempts[handle] || 0) + 1;
-                if (NS.state.engagerAttempts[handle] > 3) delete NS.state.engagerAttempts[handle];
+
+                if (NS.state.engagerAttempts[handle] > 3) {
+                    delete NS.state.engagerAttempts[handle];
+                    NS.pushLog('engager-skip', `⏭️ تخطّي ${handle} (3 محاولات)`);
+                }
                 NS.saveSettings();
                 return 0;
             }
+
+            // وصلنا للصفحة → احذف المحاولات
+            if (NS.state.engagerAttempts && NS.state.engagerAttempts[handle]) {
+                delete NS.state.engagerAttempts[handle];
+            }
+
             const followBtn = NS.collectAllFollowButtons().find(b => b.handle === handle);
-            if (!followBtn || NS.state.dryRun) return 0;
-            NS.rateRecord(); NS.fire(followBtn.btn);
+            if (!followBtn) return 0;
+
+            if (NS.state.dryRun) {
+                NS.pushLog('dry', `متابعة متفاعل: ${handle}`);
+                return 0;
+            }
+
+            NS.rateRecord();
+            NS.fire(followBtn.btn);
             if (!await NS.sleepGen(2000, myGen)) return 0;
+
             if (NS.isAlreadyFollowing(followBtn.btn)) {
-                NS.bumpStat('engagerFollows'); NS.dailyIncrement('engagerFollows');
+                NS.bumpStat('engagerFollows');
+                NS.dailyIncrement('engagerFollows');
                 NS.pushLog('engager', `✅ ${handle}`);
                 return 1;
             }
-        } catch(e){}
+        } catch (e) {}
         return 0;
     };
 
+    /* ════════════════ جمع المتفاعلين ════════════════ */
     NS.collectEngagers = function () {
-        if (!NS.state.followEngagers || !location.pathname.includes('/notifications')) return;
+        if (!NS.state.followEngagers) return;
+        if (!location.pathname.includes('/notifications')) return;
+
         const notifications = document.querySelectorAll('[data-testid="notification"], [role="article"]');
+
         for (const n of notifications) {
             const txt = (n.innerText || '').slice(0, 300);
             const type = NS.detectNotificationType(txt);
             if (type !== 'like' && type !== 'reply' && type !== 'repost') continue;
+
             const handle = NS.getHandleFromContainer(n);
             if (!handle || handle === NS.state.myHandle) continue;
             if (NS.containsBlacklisted(handle)) continue;
             if (NS.state.knownFollowers.includes(handle)) continue;
+
             if (!NS.state.engagerQueue.includes(handle)) {
                 NS.state.engagerQueue.push(handle);
-                if (NS.state.engagerQueue.length > 200) NS.state.engagerQueue.shift();
+                if (NS.state.engagerQueue.length > 200) {
+                    NS.state.engagerQueue.shift();
+                }
             }
         }
         NS.saveSettings();
     };
 
-    /* ════════════════ ✅ Track Followers (إصلاح) ════════════════ */
+    /* ════════════════ تتبع المتابعين ════════════════ */
     NS.trackCurrentFollowers = function () {
         if (!NS.state.trackUnfollowers) return;
-        // ✅ الإصلاح: استخدام /followers فقط
         if (!location.pathname.includes('/followers')) return;
-        
+
         const handles = new Set();
         document.querySelectorAll('a[href^="/profile/"]').forEach(a => {
             if (NS.isInsidePanel(a)) return;
-            const h = a.getAttribute('href').replace('/profile/','').split('/')[0];
+            const h = a.getAttribute('href').replace('/profile/', '').split('/')[0];
             if (h && h !== NS.state.myHandle && !h.includes('?')) handles.add(h);
         });
-        
+
         if (handles.size === 0) return;
-        
-        // إذا كانت هذه أول مرة، احفظ فقط
+
+        // أول مرة: احفظ فقط
         if (NS.state.knownFollowers.length === 0) {
             NS.state.knownFollowers = Array.from(handles).slice(-2000);
             NS.forceSaveSettings();
             NS.pushLog('tracker', `📥 حفظ ${handles.size} متابع`);
             return;
         }
-        
+
+        // ابحث عن من ألغى متابعتك
         const prev = new Set(NS.state.knownFollowers);
         const lost = Array.from(prev).filter(h => !handles.has(h));
         if (lost.length > 0 && prev.size > 0) {
             lost.slice(0, 5).forEach(h => NS.pushLog('unfollower', `👋 ألغى متابعتك: ${h}`));
         }
+
         const merged = new Set([...NS.state.knownFollowers, ...handles]);
         NS.state.knownFollowers = Array.from(merged).slice(-2000);
         NS.forceSaveSettings();
-        NS.pushLog('tracker', `👥 متابعون معروفون: ${NS.state.knownFollowers.length}`);
+        NS.pushLog('tracker', `👥 متابون معروفون: ${NS.state.knownFollowers.length}`);
     };
+
+    console.log('📦 actions.js محمّل بنجاح');
 
 })();
