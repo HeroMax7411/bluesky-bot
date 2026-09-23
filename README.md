@@ -1,5 +1,8 @@
-4. اضغط **Install**
-
+<a href="https://raw.githubusercontent.com/HeroMax7411/bluesky-bot/main/bsky-bot.user.js" target="_blank">
+  <div style="display:inline-block; padding:15px 40px; background:linear-gradient(135deg, #0085ff, #0066cc); color:#fff; font-size:20px; font-weight:bold; border-radius:12px; text-decoration:none; box-shadow:0 8px 20px rgba(0,133,255,0.4); font-family:Arial, sans-serif;">
+    ⬇️ دوس الآن للتثبيت
+  </div>
+</a>
 ---
 
 ## 📖 الاستخدام
