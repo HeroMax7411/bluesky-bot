@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         بوت إدارة بلو سكاي v1.0.19 PRO
-// @name:en      Bluesky Bot Manager v1.0.19 PRO
+// @name         بوت إدارة بلو سكاي v1.0.20 PRO
+// @name:en      Bluesky Bot Manager v1.0.20 PRO
 // @namespace    https://github.com/HeroMax7411/bluesky-bot
-// @version      1.0.19
+// @version      1.0.20
 // @description  بوت إدارة بلو سكاي الاحترافي - رد تلقائي + 30 ميزة
 // @description:en Professional Bluesky bot - auto reply + 30 features
 // @author       Sayed Alhlwani
@@ -24,7 +24,7 @@
 // ==/UserScript==
 
 /* ══════════════════════════════════════════════════════════════════
-   v1.0.19 — إصلاح أمني شامل:
+   v1.0.20 — Hardened security + reliability release:
    - تشفير AES-GCM 256 + PBKDF2 بدل XOR
    - إزالة getDecryptedPass تماماً
    - عدم كشف كلمة المرور في DOM
@@ -40,11 +40,11 @@
 (function () {
     'use strict';
 
-    if (window.__BSKY && window.__BSKY.version === '1.0.19') return;
+    if (window.__BSKY && window.__BSKY.version === '1.0.20') return;
 
     const NS = window.__BSKY = window.__BSKY || {};
 
-    NS.version = '1.0.19';
+    NS.version = '1.0.20';
     NS.GITHUB_REPO = 'HeroMax7411/bluesky-bot';
     NS.GITHUB_ISSUES_URL = `https://github.com/${NS.GITHUB_REPO}/issues/new`;
     NS.DEV_URL = 'https://sayedalhlwani.blogspot.com/';
@@ -56,6 +56,7 @@
     NS.PROFILES_KEY = 'bsky_bot_v75_profiles';
     NS.ERROR_LOG_KEY = 'bsky_bot_error_log_v1';
     NS.PANEL_ID = 'bsky-bot-v75';
+    NS.SECURITY_MODE = 'hardened';
 
     NS.mediaBlobs = new Map();
     NS.MAX_MEDIA_BLOBS = 10;
@@ -228,9 +229,9 @@
         scheduleEnabled: false,
         scheduleStart: 9, scheduleEnd: 23,
 
-        dailyLimitsEnabled: false,
-        dailyLimitLikes: 1000, dailyLimitFollows: 500, dailyLimitReplies: 500,
-        dailyLimitMessages: 100, dailyLimitPosts: 10, dailyLimitReposts: 50,
+        dailyLimitsEnabled: true,
+        dailyLimitLikes: 300, dailyLimitFollows: 100, dailyLimitReplies: 100,
+        dailyLimitMessages: 50, dailyLimitPosts: 10, dailyLimitReposts: 50,
         dailyLimitFollows21: 50,
         dailyCounters: {},
 
@@ -292,7 +293,7 @@
 
     if (savedRaw === null) NS.state.collapsed = false;
 
-    window.__bskyState = NS.state;
+    // لا نكشف حالة البوت على window لتقليل سطح الهجوم.
 
     ['unfollowedUsers','processedLikes','processedFollows','processedFollowBacks',
      'processedCommentLikes','processedNotifReplies','processedMessages','processedReposts',
@@ -302,15 +303,18 @@
     ['dailyCounters','replyPerf','actionPerf','engagerAttempts','calendar','panelSize']
         .forEach(k => { if (!NS.state[k] || typeof NS.state[k] !== 'object') NS.state[k] = k === 'calendar' ? Object.assign({}, NS.defaultState.calendar) : (k === 'panelSize' ? { w: 400, h: 600 } : {}); });
 
-    NS.stats = JSON.parse(localStorage.getItem(NS.STATS_KEY) || 'null') || {
+    let savedStats = null;
+    try { savedStats = JSON.parse(localStorage.getItem(NS.STATS_KEY) || 'null'); } catch (e) { savedStats = null; }
+    NS.stats = savedStats || {
         likes: 0, follows: 0, unfollows: 0, replies: 0, followBacks: 0,
         commentLikes: 0, notifReplies: 0, messageReplies: 0, posts: 0,
         reposts: 0, engagerFollows: 0, history: []
     };
     if (!Array.isArray(NS.stats.history)) NS.stats.history = [];
 
-    NS.profiles = JSON.parse(localStorage.getItem(NS.PROFILES_KEY) || '[]');
+    try { NS.profiles = JSON.parse(localStorage.getItem(NS.PROFILES_KEY) || '[]'); } catch (e) { NS.profiles = []; }
     if (!Array.isArray(NS.profiles)) NS.profiles = [];
+    NS.profiles = NS.profiles.filter(p => p && typeof p === 'object' && typeof (p.handle || (p.settings && p.settings.myHandle) || '') === 'string');
     NS.activeProfileIdx = 0;
 
     NS.loopGeneration = 0;
@@ -416,7 +420,8 @@
     NS.rateCheck = function () {
         const now = Date.now();
         NS.actionTimestamps = NS.actionTimestamps.filter(t => now - t < 60000);
-        return NS.actionTimestamps.length < NS.state.rateLimitPerMin;
+        const limit = Math.max(1, Math.min(60, Number(NS.state.rateLimitPerMin) || 1));
+        return NS.actionTimestamps.length < limit;
     };
 
     NS.rateRecord = function () { NS.actionTimestamps.push(Date.now()); };
@@ -443,7 +448,9 @@
             posts: NS.state.dailyLimitPosts, reposts: NS.state.dailyLimitReposts,
             engagerFollows: NS.state.dailyLimitFollows21,
         };
-        return (c[key] || 0) < (limits[key] || Infinity);
+        const limit = Number(limits[key]);
+        if (!Number.isFinite(limit) || limit < 0) return false;
+        return (Number(c[key]) || 0) < limit;
     };
 
     NS.dailyIncrement = function (key, inc) {
@@ -590,7 +597,7 @@
     const _decrypt = async function (enc) {
         if (!enc) return '';
         if (enc.startsWith('ENC:')) return legacyXorDecrypt(enc);
-        if (!enc.startsWith('V2:')) return enc; // plaintext fallback
+        if (!enc.startsWith('V2:')) return ''; // لا نقبل plaintext ككلمة مرور محفوظة
         try {
             const key = await getKey();
             const combined = b64ToU8(enc.slice(3));
@@ -618,14 +625,13 @@
     NS.setAppPassword = async function (plain) {
         plain = String(plain || '').trim();
         if (!plain) { NS.state.blueskyAppPassword = ''; NS.forceSaveSettings(); return; }
-        NS.state.blueskyAppPassword = NS.state.encryptPasswords !== false
-            ? await encrypt(plain)
-            : plain;
+        // لا نسمح بحفظ كلمة المرور كنص صريح في الوضع الافتراضي.
+        NS.state.blueskyAppPassword = await encrypt(plain);
         NS.forceSaveSettings();
     };
 
     // ═══ إدارة الجلسات (خاصة — ليست على NS) ═══
-    const _accountSessions = {};
+    const _accountSessions = Object.create(null);
 
     async function createSession(handle, pass) {
         if (!handle) throw new Error('اسم الحساب فارغ');
@@ -691,16 +697,16 @@
         return createSession(handle, pass);
     };
 
-    NS.createSession = createSession;
-    NS.refreshSessionFor = refreshSessionFor;
-
+    // لا نكشف دوال إنشاء/تجديد الجلسات منخفضة المستوى على الكائن العام.
     NS.clearSessions = function () {
         for (const k of Object.keys(_accountSessions)) delete _accountSessions[k];
     };
 
     NS.uploadBlob = async function (accessJwt, file, handleForRefresh) {
         if (!file || !(file instanceof Blob)) throw new Error('ملف غير صالح');
+        if (file.size <= 0) throw new Error('الملف فارغ');
         if (file.size > 100 * 1024 * 1024) throw new Error('الملف أكبر من 100 MB');
+        if (file.type && !/^(image\/|video\/)/i.test(file.type)) throw new Error('نوع الوسائط غير مدعوم');
         const buf = await file.arrayBuffer();
         const doUpload = async jwt => fetch('https://bsky.social/xrpc/com.atproto.repo.uploadBlob', {
             method: 'POST',
@@ -738,10 +744,35 @@
     };
 
     NS.matchesLanguage = function (text) {
-        if (!NS.state.languageFilter || !NS.state.languageFilter.trim()) return true;
-        const l = NS.state.languageFilter.trim().toLowerCase();
-        if (l === 'ar' || l === 'arabic' || l === 'عربي') return NS.isArabicText(text);
-        return true;
+        const raw = String(NS.state.languageFilter || '').trim().toLowerCase();
+        if (!raw) return true;
+        const aliases = {
+            ar: 'ar', arabic: 'ar', 'عربي': 'ar',
+            en: 'en', english: 'en',
+            fr: 'fr', french: 'fr',
+            de: 'de', german: 'de',
+            es: 'es', spanish: 'es',
+            it: 'it', italian: 'it',
+            pt: 'pt', portuguese: 'pt',
+            tr: 'tr', turkish: 'tr',
+            ru: 'ru', russian: 'ru'
+        };
+        const lang = aliases[raw] || raw;
+        const t = String(text || '');
+        if (!t.trim()) return false;
+        if (lang === 'ar') return NS.isArabicText(t);
+        const patterns = {
+            en: /[A-Za-z]/,
+            fr: /[A-Za-zÀ-ÿ]/,
+            de: /[A-Za-zÄÖÜäöüß]/,
+            es: /[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/,
+            it: /[A-Za-zÀ-ÖØ-öø-ÿ]/,
+            pt: /[A-Za-zÀ-ÖØ-öø-ÿ]/,
+            tr: /[A-Za-zÇĞİÖŞÜçğıöşü]/,
+            ru: /[А-Яа-яЁё]/
+        };
+        const rx = patterns[lang];
+        return rx ? rx.test(t) : true;
     };
 
     NS.parseList = s => String(s || '').split(/[\n,،]/).map(w => w.trim().toLowerCase()).filter(Boolean);
@@ -2320,7 +2351,7 @@
         if (p.appPassword) NS.state.blueskyAppPassword = p.appPassword;
         // ✅ مسح جلسات الحساب القديم
         NS.clearSessions();
-        window.__bskyState = NS.state;
+        // لا نكشف حالة البوت على window لتقليل سطح الهجوم.
         ['unfollowedUsers','processedLikes','processedFollows','processedFollowBacks',
          'processedCommentLikes','processedNotifReplies','processedMessages','processedReposts',
          'processedPosts','activityLog','scheduledPosts','knownFollowers','engagerQueue']
