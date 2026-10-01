@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         بوت إدارة بلو سكاي v1.0.15 PRO
-// @name:en      Bluesky Bot Manager v1.0.15 PRO
+// @name         بوت إدارة بلو سكاي v1.0.19 PRO
+// @name:en      Bluesky Bot Manager v1.0.19 PRO
 // @namespace    https://github.com/HeroMax7411/bluesky-bot
-// @version      1.0.15
-// @description  بوت إدارة بلو سكاي الاحترافي - رد تلقائي على أي محتوى + 30 ميزة
-// @description:en Professional Bluesky bot - auto reply on any content + 30 features
+// @version      1.0.19
+// @description  بوت إدارة بلو سكاي الاحترافي - رد تلقائي + 30 ميزة
+// @description:en Professional Bluesky bot - auto reply + 30 features
 // @author       Sayed Alhlwani
 // @homepageURL  https://sayedalhlwani.blogspot.com/
 // @supportURL   https://github.com/HeroMax7411/bluesky-bot/issues
@@ -13,11 +13,8 @@
 // @match        https://bsky.app/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=bsky.app
 // @grant        GM_setClipboard
-// @grant        GM_download
 // @grant        GM_notification
 // @grant        GM_xmlhttpRequest
-// @grant        GM_getValue
-// @grant        GM_setValue
 // @connect      api.open-meteo.com
 // @connect      bsky.social
 // @connect      api.github.com
@@ -27,7 +24,14 @@
 // ==/UserScript==
 
 /* ══════════════════════════════════════════════════════════════════
-   v1.0.15 — إصلاح شامل: كل الصفحات تعمل (Home / Notifications / Messages)
+   v1.0.19 — إصلاح أمني شامل:
+   - تشفير AES-GCM 256 + PBKDF2 بدل XOR
+   - إزالة getDecryptedPass تماماً
+   - عدم كشف كلمة المرور في DOM
+   - حماية من Prototype Pollution
+   - Sessions في closure خاص
+   - تحقق SHA-256 للتحديثات
+   - إزالة handle من تقارير GitHub
    ══════════════════════════════════════════════════════════════════ */
 
 /* ═══════════════════════════════════════════════════════════
@@ -36,11 +40,11 @@
 (function () {
     'use strict';
 
-    if (window.__BSKY && window.__BSKY.version === '1.0.15') return;
+    if (window.__BSKY && window.__BSKY.version === '1.0.19') return;
 
     const NS = window.__BSKY = window.__BSKY || {};
 
-    NS.version = '1.0.15';
+    NS.version = '1.0.19';
     NS.GITHUB_REPO = 'HeroMax7411/bluesky-bot';
     NS.GITHUB_ISSUES_URL = `https://github.com/${NS.GITHUB_REPO}/issues/new`;
     NS.DEV_URL = 'https://sayedalhlwani.blogspot.com/';
@@ -53,19 +57,28 @@
     NS.ERROR_LOG_KEY = 'bsky_bot_error_log_v1';
     NS.PANEL_ID = 'bsky-bot-v75';
 
-    /* مخزن المرفقات (لا يُحفظ في localStorage) */
     NS.mediaBlobs = new Map();
     NS.MAX_MEDIA_BLOBS = 10;
 
-    /* جلسات لكل حساب */
-    NS.accountSessions = NS.accountSessions || {};
-
-    /* ════════════════ أدوات ════════════════ */
     NS.sleep = ms => new Promise(r => setTimeout(r, ms));
     NS.rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
     NS.todayStr = () => new Date().toISOString().slice(0, 10);
     NS.esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
         c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    // ✅ إصلاح Prototype Pollution: تعيين آمن يتجاهل المفاتيح الخطرة
+    const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+    NS.safeAssign = function (target, ...sources) {
+        if (!target || typeof target !== 'object') target = {};
+        for (const src of sources) {
+            if (!src || typeof src !== 'object') continue;
+            for (const key of Object.keys(src)) {
+                if (BLOCKED_KEYS.has(key)) continue;
+                try { target[key] = src[key]; } catch (e) {}
+            }
+        }
+        return target;
+    };
 
     NS.notify = function (title, text) {
         try {
@@ -75,45 +88,6 @@
         } catch (e) {}
     };
 
-    /* ════════════════ التشفير ════════════════ */
-    const XOR_KEY = 'bsky-v75-pro-key-2026';
-    const strToU8 = str => new TextEncoder().encode(str);
-    const u8ToStr = u8 => new TextDecoder().decode(u8);
-    const u8ToB64 = u8 => {
-        let bin = '';
-        for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
-        return btoa(bin);
-    };
-    const b64ToU8 = b64 => {
-        const bin = atob(b64);
-        const u8 = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-        return u8;
-    };
-
-    NS.encrypt = function (text) {
-        if (!text) return '';
-        try {
-            const bytes = strToU8(text);
-            const keyBytes = strToU8(XOR_KEY);
-            const out = new Uint8Array(bytes.length);
-            for (let i = 0; i < bytes.length; i++) out[i] = bytes[i] ^ keyBytes[i % keyBytes.length];
-            return 'ENC:' + u8ToB64(out);
-        } catch (e) { return text; }
-    };
-
-    NS.decrypt = function (enc) {
-        if (!enc || !enc.startsWith('ENC:')) return enc || '';
-        try {
-            const bytes = b64ToU8(enc.slice(4));
-            const keyBytes = strToU8(XOR_KEY);
-            const out = new Uint8Array(bytes.length);
-            for (let i = 0; i < bytes.length; i++) out[i] = bytes[i] ^ keyBytes[i % keyBytes.length];
-            return u8ToStr(out);
-        } catch (e) { return ''; }
-    };
-
-    /* ════════════════ الأخطاء ════════════════ */
     let errorLog = [];
     try {
         errorLog = JSON.parse(localStorage.getItem(NS.ERROR_LOG_KEY) || '[]');
@@ -134,8 +108,8 @@
                 t: Date.now(), version: NS.version,
                 message: 'Unknown', stack: '',
                 context: String(context || '').slice(0, 200),
-                url: (location.href || '').slice(0, 200),
-                handle: (NS.state && NS.state.myHandle) || ''
+                // ✅ لم نعد نخزّن الـ URL الكامل ولا الـ handle افتراضياً
+                handle: ''
             };
             if (err) {
                 try { entry.message = String(err.message || err).slice(0, 500); } catch (e) {}
@@ -201,12 +175,14 @@
         `).join('');
     };
 
+    // ✅ إزالة handle من التقرير — لا نُسرّب هوية المستخدم
     NS.reportErrorToGitHub = function () {
         const errors = NS.errorLog.slice(-5);
         if (!errors.length) { alert('✅ لا توجد أخطاء'); return; }
         const title = encodeURIComponent(`[Bug] v${NS.version} - ${errors[0].message.slice(0, 60)}`);
         const body = encodeURIComponent(
-            `## 🐛 تقرير خطأ\n\n**الإصدار:** v${NS.version}\n**التاريخ:** ${new Date().toLocaleString('ar-EG')}\n**الحساب:** ${NS.state.myHandle}\n\n---\n\n` +
+            `## 🐛 تقرير خطأ\n\n**الإصدار:** v${NS.version}\n**التاريخ:** ${new Date().toLocaleString('ar-EG')}\n\n` +
+            `> ⚠️ تم إزالة معرّف الحساب تلقائياً لأسباب أمنية. راجع البيانات قبل النشر.\n\n---\n\n` +
             errors.map((e, i) => `### خطأ #${i + 1}\n- **الرسالة:** \`${e.message}\`\n- **السياق:** ${e.context}\n${e.stack ? `- **Stack:**\n\`\`\`\n${e.stack}\n\`\`\`` : ''}`).join('\n\n')
         );
         window.open(`${NS.GITHUB_ISSUES_URL}?title=${title}&body=${body}&labels=bug`, '_blank');
@@ -227,7 +203,6 @@
         NS.renderErrorTab();
     };
 
-    /* ════════════════ الحالة الافتراضية ════════════════ */
     NS.defaultState = {
         autoLike: false, autoFollow: false, autoUnfollow: false, autoReply: false,
         autoFollowBack: false, autoLikeCommenters: false, autoReplyNotifications: false,
@@ -307,12 +282,13 @@
         collapsed: false,
     };
 
-    /* ════════════════ تحميل الحالة ════════════════ */
     let savedRaw = null;
     try { savedRaw = localStorage.getItem(NS.STORAGE_KEY); } catch (e) {}
     let savedObj = {};
     try { savedObj = JSON.parse(savedRaw || '{}') || {}; } catch (e) {}
-    NS.state = Object.assign({}, NS.defaultState, savedObj);
+
+    // ✅ استخدام safeAssign لمنع Prototype Pollution
+    NS.state = NS.safeAssign({}, NS.defaultState, savedObj);
 
     if (savedRaw === null) NS.state.collapsed = false;
 
@@ -326,7 +302,6 @@
     ['dailyCounters','replyPerf','actionPerf','engagerAttempts','calendar','panelSize']
         .forEach(k => { if (!NS.state[k] || typeof NS.state[k] !== 'object') NS.state[k] = k === 'calendar' ? Object.assign({}, NS.defaultState.calendar) : (k === 'panelSize' ? { w: 400, h: 600 } : {}); });
 
-    /* ════════════════ الإحصائيات ════════════════ */
     NS.stats = JSON.parse(localStorage.getItem(NS.STATS_KEY) || 'null') || {
         likes: 0, follows: 0, unfollows: 0, replies: 0, followBacks: 0,
         commentLikes: 0, notifReplies: 0, messageReplies: 0, posts: 0,
@@ -338,7 +313,6 @@
     if (!Array.isArray(NS.profiles)) NS.profiles = [];
     NS.activeProfileIdx = 0;
 
-    /* ════════════════ متغيرات عامة ════════════════ */
     NS.loopGeneration = 0;
     NS.activeLoopId = null;
     NS.lastMemoryReset = Date.now();
@@ -346,11 +320,9 @@
     NS.actionTimestamps = [];
     NS.scrollCache = { el: null, ts: 0, path: '' };
     NS.cachedWeather = null;
-    NS.sessionCache = { accessJwt: null, refreshJwt: null, did: null, expiresAt: 0 };
     NS.handleDetectionAttempts = 0;
     NS.pageArrivedAt = Date.now();
 
-    /* ════════════════ الحفظ ════════════════ */
     let saveScheduled = false;
 
     NS.saveSettings = function () {
@@ -520,6 +492,237 @@
 
 
 /* ═══════════════════════════════════════════════════════════
+   src/vault.js — التشفير القوي وإدارة الجلسات الخاصة
+   ═══════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    const NS = window.__BSKY;
+    if (!NS) { console.error('❌ vault.js'); return; }
+
+    // ═══ Web Crypto setup ═══
+    const DEVICE_KEY_STORAGE = 'bsky_device_key_v2';
+    const SALT_STORAGE = 'bsky_vault_salt_v2';
+    const PBKDF2_ITER = 250000;
+    const IV_LEN = 12;
+    const SESSION_TTL_MS = 100 * 60 * 1000;
+
+    let keyPromise = null;
+    const memoryFallback = {};
+
+    const u8ToB64 = u8 => {
+        let bin = '';
+        for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+        return btoa(bin);
+    };
+    const b64ToU8 = b64 => {
+        const bin = atob(b64);
+        const u8 = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+        return u8;
+    };
+
+    function getOrCreate(name, len) {
+        try {
+            const v = localStorage.getItem(name);
+            if (v) return b64ToU8(v);
+            const arr = new Uint8Array(len);
+            crypto.getRandomValues(arr);
+            localStorage.setItem(name, u8ToB64(arr));
+            return arr;
+        } catch (e) {
+            if (!memoryFallback[name]) {
+                const arr = new Uint8Array(len);
+                crypto.getRandomValues(arr);
+                memoryFallback[name] = arr;
+            }
+            return memoryFallback[name];
+        }
+    }
+
+    async function getKey() {
+        if (!keyPromise) {
+            keyPromise = (async () => {
+                const deviceKey = getOrCreate(DEVICE_KEY_STORAGE, 32);
+                const salt = getOrCreate(SALT_STORAGE, 16);
+                const base = await crypto.subtle.importKey(
+                    'raw', deviceKey, 'PBKDF2', false, ['deriveKey']
+                );
+                return crypto.subtle.deriveKey(
+                    { name: 'PBKDF2', salt, iterations: PBKDF2_ITER, hash: 'SHA-256' },
+                    base,
+                    { name: 'AES-GCM', length: 256 },
+                    false,
+                    ['encrypt', 'decrypt']
+                );
+            })();
+        }
+        return keyPromise;
+    }
+
+    // فك تشفير قديم بصيغة XOR (للتوافق فقط — قراءة فقط)
+    const LEGACY_XOR_KEY = 'bsky-v75-pro-key-2026';
+    function legacyXorDecrypt(enc) {
+        try {
+            const bytes = b64ToU8(enc.slice(4));
+            const keyBytes = new TextEncoder().encode(LEGACY_XOR_KEY);
+            const out = new Uint8Array(bytes.length);
+            for (let i = 0; i < bytes.length; i++) out[i] = bytes[i] ^ keyBytes[i % keyBytes.length];
+            return new TextDecoder().decode(out);
+        } catch (e) { return ''; }
+    }
+
+    async function encrypt(plain) {
+        if (!plain) return '';
+        const key = await getKey();
+        const iv = crypto.getRandomValues(new Uint8Array(IV_LEN));
+        const ct = await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv },
+            key,
+            new TextEncoder().encode(String(plain))
+        );
+        const combined = new Uint8Array(IV_LEN + ct.byteLength);
+        combined.set(iv, 0);
+        combined.set(new Uint8Array(ct), IV_LEN);
+        return 'V2:' + u8ToB64(combined);
+    }
+
+    // ✅ دالة فك التشفير خاصة — لا تُعرَّض على NS
+    const _decrypt = async function (enc) {
+        if (!enc) return '';
+        if (enc.startsWith('ENC:')) return legacyXorDecrypt(enc);
+        if (!enc.startsWith('V2:')) return enc; // plaintext fallback
+        try {
+            const key = await getKey();
+            const combined = b64ToU8(enc.slice(3));
+            const iv = combined.slice(0, IV_LEN);
+            const ct = combined.slice(IV_LEN);
+            const pt = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv },
+                key,
+                ct
+            );
+            return new TextDecoder().decode(pt);
+        } catch (e) {
+            console.error('فشل فك التشفير');
+            return '';
+        }
+    };
+
+    // ✅ API عام آمن
+    NS.encrypt = encrypt; // التشفير آمن للعرض
+
+    NS.hasAppPassword = function () {
+        return !!(NS.state.blueskyAppPassword && String(NS.state.blueskyAppPassword).length > 0);
+    };
+
+    NS.setAppPassword = async function (plain) {
+        plain = String(plain || '').trim();
+        if (!plain) { NS.state.blueskyAppPassword = ''; NS.forceSaveSettings(); return; }
+        NS.state.blueskyAppPassword = NS.state.encryptPasswords !== false
+            ? await encrypt(plain)
+            : plain;
+        NS.forceSaveSettings();
+    };
+
+    // ═══ إدارة الجلسات (خاصة — ليست على NS) ═══
+    const _accountSessions = {};
+
+    async function createSession(handle, pass) {
+        if (!handle) throw new Error('اسم الحساب فارغ');
+        if (!pass) throw new Error('كلمة المرور فارغة');
+        const res = await fetch('https://bsky.social/xrpc/com.atproto.server.createSession', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identifier: handle, password: pass })
+        });
+        if (!res.ok) {
+            const txt = await res.text().catch(() => '');
+            throw new Error(`فشل تسجيل الدخول (${res.status}) ${txt.slice(0, 80)}`);
+        }
+        const s = await res.json();
+        const session = {
+            accessJwt: s.accessJwt, refreshJwt: s.refreshJwt, did: s.did,
+            handle, expiresAt: Date.now() + SESSION_TTL_MS
+        };
+        _accountSessions[handle] = session;
+        return session;
+    }
+
+    async function refreshSessionFor(handle) {
+        const cached = _accountSessions[handle];
+        if (!cached || !cached.refreshJwt) throw new Error('لا توجد جلسة');
+        const res = await fetch('https://bsky.social/xrpc/com.atproto.server.refreshSession', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${cached.refreshJwt}` }
+        });
+        if (!res.ok) throw new Error('refresh failed ' + res.status);
+        const s = await res.json();
+        const session = {
+            accessJwt: s.accessJwt, refreshJwt: s.refreshJwt, did: s.did,
+            handle, expiresAt: Date.now() + SESSION_TTL_MS
+        };
+        _accountSessions[handle] = session;
+        return session;
+    }
+
+    NS.getCurrentSession = async function () {
+        const enc = NS.state.blueskyAppPassword || '';
+        if (!enc) throw new Error('لا توجد كلمة مرور محفوظة');
+        const handle = NS.state.myHandle;
+        if (!handle) throw new Error('اسم الحساب غير محدد');
+        const c = _accountSessions[handle];
+        if (c && c.accessJwt && Date.now() < c.expiresAt) return c;
+        const pass = await _decrypt(enc);
+        if (!pass) throw new Error('فشل فك تشفير كلمة المرور');
+        return createSession(handle, pass);
+    };
+
+    NS.getProfileSession = async function (profileIdx) {
+        const p = NS.profiles[profileIdx];
+        if (!p) throw new Error('حساب غير موجود');
+        const handle = p.handle || (p.settings && p.settings.myHandle) || '';
+        const enc = p.appPassword || (p.settings && p.settings.blueskyAppPassword) || '';
+        if (!handle) throw new Error('اسم الحساب فارغ');
+        if (!enc) throw new Error('كلمة المرور مفقودة');
+        const c = _accountSessions[handle];
+        if (c && c.accessJwt && Date.now() < c.expiresAt) return c;
+        const pass = await _decrypt(enc);
+        if (!pass) throw new Error('فشل فك تشفير كلمة المرور');
+        return createSession(handle, pass);
+    };
+
+    NS.createSession = createSession;
+    NS.refreshSessionFor = refreshSessionFor;
+
+    NS.clearSessions = function () {
+        for (const k of Object.keys(_accountSessions)) delete _accountSessions[k];
+    };
+
+    NS.uploadBlob = async function (accessJwt, file, handleForRefresh) {
+        if (!file || !(file instanceof Blob)) throw new Error('ملف غير صالح');
+        if (file.size > 100 * 1024 * 1024) throw new Error('الملف أكبر من 100 MB');
+        const buf = await file.arrayBuffer();
+        const doUpload = async jwt => fetch('https://bsky.social/xrpc/com.atproto.repo.uploadBlob', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${jwt}`, 'Content-Type': file.type || 'application/octet-stream' },
+            body: buf
+        });
+        let res = await doUpload(accessJwt);
+        if (res.status === 401 && handleForRefresh) {
+            const s = await refreshSessionFor(handleForRefresh);
+            res = await doUpload(s.accessJwt);
+        }
+        if (!res.ok) throw new Error('فشل رفع الملف: HTTP ' + res.status);
+        const j = await res.json();
+        if (!j.blob) throw new Error('استجابة غير صالحة');
+        return j.blob;
+    };
+
+    console.log('📦 vault.js محمّل — AES-GCM 256 + PBKDF2');
+})();
+
+
+/* ═══════════════════════════════════════════════════════════
    src/dom.js — أدوات DOM
    ═══════════════════════════════════════════════════════════ */
 (function () {
@@ -602,7 +805,6 @@
             .replace(/\{date\}/g, NS.todayStr());
     };
 
-    /* ✅ الهاشتاجات: ثابتة + كلمات مفتاحية + بدون تكرار */
     NS.generateHashtags = function (text) {
         if (!NS.state.autoHashtags) return '';
         const found = new Set();
@@ -670,16 +872,6 @@
         return m[code] || 'معتدل 🌡️';
     };
 
-    NS.getDecryptedPass = function () {
-        const p = NS.state.blueskyAppPassword || '';
-        return p.startsWith('ENC:') ? NS.decrypt(p) : p;
-    };
-
-    NS.setEncryptedPass = function (plain) {
-        NS.state.blueskyAppPassword = NS.state.encryptPasswords ? NS.encrypt(plain) : plain;
-        NS.forceSaveSettings();
-    };
-
     NS.getPostKey = function (el) {
         const l = el && el.querySelector ? el.querySelector('a[href*="/post/"]') : null;
         return l ? l.getAttribute('href') : ((el && el.innerText) || '').slice(0, 80);
@@ -734,6 +926,7 @@
         const start = Date.now();
         while (Date.now() - start < timeoutMs) {
             if (myGen !== NS.loopGeneration) return null;
+            if (NS.state.paused) return null;
             const ed = NS.findComposer();
             if (ed) return ed;
             await NS.sleep(300);
@@ -760,27 +953,54 @@
     NS.setInputValue = function (el, value) {
         if (!el || value == null) return false;
         el.focus();
-        const isEditable = el.getAttribute('contenteditable') === 'true' || el.getAttribute('role') === 'textbox';
+
+        const isEditable = el.getAttribute('contenteditable') === 'true' ||
+                           el.getAttribute('role') === 'textbox';
+
         if (isEditable) {
             try {
+                const sel = window.getSelection();
                 const range = document.createRange();
                 range.selectNodeContents(el);
-                const sel = window.getSelection();
                 sel.removeAllRanges();
                 sel.addRange(range);
-                document.execCommand('delete', false, null);
-                const ok = document.execCommand('insertText', false, value);
-                if (!ok || !(el.innerText || '').trim()) {
-                    el.textContent = value;
-                    el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: value }));
+                try { document.execCommand('delete', false, null); } catch (e) {}
+
+                let inserted = false;
+                try {
+                    inserted = document.execCommand('insertText', false, value);
+                } catch (e) { inserted = false; }
+
+                const currentText = (el.innerText || el.textContent || '').trim();
+                if (!inserted || !currentText) {
+                    const lines = String(value).split('\n');
+                    for (let i = 0; i < lines.length; i++) {
+                        if (i > 0) {
+                            try { document.execCommand('insertLineBreak', false, null); }
+                            catch (e) {
+                                try { document.execCommand('insertHTML', false, '<br>'); } catch (f) {}
+                            }
+                        }
+                        try { document.execCommand('insertText', false, lines[i]); } catch (e) {}
+                    }
                 }
+
+                el.dispatchEvent(new InputEvent('input', {
+                    bubbles: true, cancelable: true, inputType: 'insertText', data: value
+                }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
             } catch (e) {
-                el.textContent = value;
-                el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: value }));
+                try {
+                    el.textContent = value;
+                    el.dispatchEvent(new InputEvent('input', {
+                        bubbles: true, cancelable: true, inputType: 'insertText', data: value
+                    }));
+                } catch (f) {}
             }
-            el.dispatchEvent(new Event('change', { bubbles: true }));
         } else {
-            const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+            const proto = el.tagName === 'TEXTAREA'
+                ? window.HTMLTextAreaElement.prototype
+                : window.HTMLInputElement.prototype;
             const setter = Object.getOwnPropertyDescriptor(proto, 'value');
             if (setter && setter.set) setter.set.call(el, value);
             else el.value = value;
@@ -805,7 +1025,7 @@
                 aria.includes('إعجاب') || aria.includes('إعادة') || aria.includes('مشاركة') ||
                 aria.includes('bookmark') || aria.includes('more')) continue;
             const isReply =
-                tid === 'replybtn' || tid === 'reply-button' ||
+                tid === 'replybtn' || tid === 'reply-button' || tid === 'replybutton' ||
                 aria === 'reply' || aria.startsWith('reply ') ||
                 aria === 'رد' || aria.startsWith('رد ') ||
                 aria.includes('الرد على') || aria.includes('reply to') ||
@@ -951,7 +1171,6 @@
         return results;
     };
 
-    /* ✅ detectNotificationType — يدعم كل الأنواع */
     NS.detectNotificationType = function (text) {
         const t = (text || '').toLowerCase();
         if (t.includes('followed you back') || t.includes('followed you') ||
@@ -980,103 +1199,28 @@
     const NS = window.__BSKY;
     if (!NS) { console.error('❌ actions.js'); return; }
 
-    /* ════════════════ الجلسات ════════════════ */
-    NS.getSession = async function () {
-        const pass = NS.getDecryptedPass();
-        if (!pass) throw new Error('لا توجد كلمة مرور');
-        return NS.getSessionFor(NS.state.myHandle, pass);
-    };
-
-    NS.getSessionFor = async function (handle, pass) {
-        if (!handle) throw new Error('اسم الحساب فارغ');
-        if (!pass) throw new Error('كلمة المرور فارغة');
-        const cached = NS.accountSessions[handle];
-        if (cached && cached.accessJwt && Date.now() < cached.expiresAt) return cached;
-
-        const loginRes = await fetch('https://bsky.social/xrpc/com.atproto.server.createSession', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ identifier: handle, password: pass })
-        });
-        if (!loginRes.ok) throw new Error(`فشل تسجيل الدخول لـ ${handle} (${loginRes.status})`);
-
-        const s = await loginRes.json();
-        const session = {
-            accessJwt: s.accessJwt, refreshJwt: s.refreshJwt, did: s.did,
-            handle: handle, expiresAt: Date.now() + 100 * 60 * 1000
-        };
-        NS.accountSessions[handle] = session;
-        if (handle === NS.state.myHandle) NS.sessionCache = session;
-        return session;
-    };
-
-    NS.refreshSession = async function () { return NS.refreshSessionFor(NS.state.myHandle); };
-
-    NS.refreshSessionFor = async function (handle) {
-        const cached = NS.accountSessions[handle] || (handle === NS.state.myHandle ? NS.sessionCache : null);
-        if (!cached || !cached.refreshJwt) throw new Error('لا توجد جلسة');
-        try {
-            const res = await fetch('https://bsky.social/xrpc/com.atproto.server.refreshSession', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${cached.refreshJwt}` }
-            });
-            if (!res.ok) throw new Error('refresh failed');
-            const s = await res.json();
-            const session = {
-                accessJwt: s.accessJwt, refreshJwt: s.refreshJwt, did: s.did,
-                handle: handle, expiresAt: Date.now() + 100 * 60 * 1000
-            };
-            NS.accountSessions[handle] = session;
-            if (handle === NS.state.myHandle) NS.sessionCache = session;
-            return session;
-        } catch (e) {
-            delete NS.accountSessions[handle];
-            if (handle === NS.state.myHandle) NS.sessionCache = { accessJwt: null, refreshJwt: null, did: null, expiresAt: 0 };
-            throw e;
-        }
-    };
-
-    NS.uploadBlob = async function (accessJwt, file) {
-        if (!file || !(file instanceof Blob)) throw new Error('ملف غير صالح');
-        if (file.size > 100 * 1024 * 1024) throw new Error('الملف أكبر من 100 MB');
-        const buf = await file.arrayBuffer();
-        let res = await fetch('https://bsky.social/xrpc/com.atproto.repo.uploadBlob', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${accessJwt}`, 'Content-Type': file.type || 'application/octet-stream' },
-            body: buf
-        });
-        if (res.status === 401) {
-            const s = await NS.refreshSession();
-            res = await fetch('https://bsky.social/xrpc/com.atproto.repo.uploadBlob', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${s.accessJwt}`, 'Content-Type': file.type || 'application/octet-stream' },
-                body: buf
-            });
-        }
-        if (!res.ok) throw new Error('فشل رفع الملف: HTTP ' + res.status);
-        const j = await res.json();
-        if (!j.blob) throw new Error('استجابة غير صالحة');
-        return j.blob;
-    };
+    // ✅ يبقى للتوافق مع الاستدعاءات الداخلية فقط
+    NS.getSession = function () { return NS.getCurrentSession(); };
 
     NS.publishScheduledPost = async function (post) {
-        let targetHandle = NS.state.myHandle;
-        let targetPass = NS.getDecryptedPass();
+        let session;
         let targetLabel = 'الحساب الحالي';
-
-        if (typeof post.accountIdx === 'number' && post.accountIdx >= 0 && NS.profiles[post.accountIdx]) {
-            const p = NS.profiles[post.accountIdx];
-            targetHandle = p.handle || (p.settings && p.settings.myHandle) || '';
-            const encPass = p.appPassword || (p.settings && p.settings.blueskyAppPassword) || '';
-            targetPass = encPass.startsWith('ENC:') ? NS.decrypt(encPass) : encPass;
-            targetLabel = p.name;
+        try {
+            if (typeof post.accountIdx === 'number' && post.accountIdx >= 0) {
+                const p = NS.profiles[post.accountIdx];
+                if (!p) { NS.pushLog('post-fail', '❌ الحساب محذوف'); return false; }
+                targetLabel = p.name;
+                session = await NS.getProfileSession(post.accountIdx);
+            } else {
+                session = await NS.getCurrentSession();
+            }
+        } catch (e) {
+            NS.pushLog('post-fail', `❌ [${targetLabel}] ${e.message}`);
+            NS.captureError(e, 'publishScheduledPost.session');
+            return false;
         }
 
-        if (!targetHandle) { NS.pushLog('post-fail', `❌ اسم الحساب فارغ (${targetLabel})`); return false; }
-        if (!targetPass) { NS.pushLog('post-fail', `❌ لا توجد كلمة مرور لـ ${targetLabel}`); return false; }
-
         try {
-            let s = await NS.getSessionFor(targetHandle, targetPass);
             let text = post.text || '';
             if (NS.state.weatherPosts) {
                 const w = await NS.fetchWeather();
@@ -1092,14 +1236,14 @@
             const mediaFile = post.hasMedia && post.id ? NS.mediaBlobs.get(post.id) : null;
             if (mediaFile) {
                 try {
-                    const blob = await NS.uploadBlob(s.accessJwt, mediaFile);
+                    const blob = await NS.uploadBlob(session.accessJwt, mediaFile, session.handle);
                     if (post.mediaType === 'video') embed = { $type: 'app.bsky.embed.video', video: blob };
                     else embed = { $type: 'app.bsky.embed.images', images: [{ image: blob, alt: post.mediaAlt || '' }] };
                 } catch (e) {
                     NS.pushLog('post-fail', '⚠️ فشل رفع المرفق: ' + e.message);
                 }
             } else if (post.hasMedia) {
-                NS.pushLog('post-fail', '⚠️ المرفق غير متاح (انتهت الجلسة)');
+                NS.pushLog('post-fail', '⚠️ المرفق غير متاح');
             }
 
             const record = {
@@ -1113,13 +1257,15 @@
             const doPost = async jwt => fetch('https://bsky.social/xrpc/com.atproto.repo.createRecord', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
-                body: JSON.stringify({ repo: s.did, collection: 'app.bsky.feed.post', record })
+                body: JSON.stringify({ repo: session.did, collection: 'app.bsky.feed.post', record })
             });
 
-            let postRes = await doPost(s.accessJwt);
+            let postRes = await doPost(session.accessJwt);
             if (postRes.status === 401) {
-                try { s = await NS.refreshSessionFor(targetHandle); postRes = await doPost(s.accessJwt); }
-                catch (e) { delete NS.accountSessions[targetHandle]; s = await NS.getSessionFor(targetHandle, targetPass); postRes = await doPost(s.accessJwt); }
+                try {
+                    const s = await NS.refreshSessionFor(session.handle);
+                    postRes = await doPost(s.accessJwt);
+                } catch (e) { throw new Error('فشل تجديد الجلسة'); }
             }
             if (!postRes.ok) {
                 const errTxt = await postRes.text().catch(() => '');
@@ -1164,7 +1310,6 @@
         });
     };
 
-    /* ════════════════ رد المتابعة ════════════════ */
     NS.doFollowBack = async function (myGen) {
         if (!location.pathname.includes('/notifications')) return 0;
         if (!NS.dailyCheck('followBacks')) { NS.pushLog('limit', '⛔ حد رد المتابعة'); return 0; }
@@ -1172,7 +1317,7 @@
         NS.updateDebugInfo('follow', targets.length);
         let count = 0;
         for (const t of targets) {
-            if (myGen !== NS.loopGeneration) return count;
+            if (myGen !== NS.loopGeneration || NS.state.paused) return count;
             if (!NS.rateCheck()) break;
             if (NS.state.processedFollowBacks.includes(t.handle)) continue;
             if (NS.state.dryRun) { NS.pushLog('dry', `رد متابعة: ${t.handle}`); continue; }
@@ -1197,7 +1342,6 @@
         return count;
     };
 
-    /* ════════════════ إعجاب المعلّقين ════════════════ */
     NS.doLikeCommenters = async function (myGen) {
         const onN = location.pathname.includes('/notifications');
         const onP = /\/profile\/[^/]+/.test(location.pathname);
@@ -1207,7 +1351,7 @@
         NS.updateDebugInfo('like', targets.length);
         let count = 0;
         for (const t of targets) {
-            if (myGen !== NS.loopGeneration) return count;
+            if (myGen !== NS.loopGeneration || NS.state.paused) return count;
             if (!NS.rateCheck()) break;
             if (NS.state.processedCommentLikes.includes(t.key)) continue;
             if (NS.state.dryRun) { NS.pushLog('dry', `إعجاب معلّق`); continue; }
@@ -1231,7 +1375,6 @@
         return count;
     };
 
-    /* ════════════════ الإعجاب العام ════════════════ */
     NS.doAutoLike = async function (myGen) {
         if (Math.random() * 100 > NS.state.likeRatio) return 0;
         if (!NS.dailyCheck('likes')) { NS.pushLog('limit', '⛔ حد الإعجاب'); return 0; }
@@ -1239,7 +1382,7 @@
         NS.updateDebugInfo('like', targets.length);
         let count = 0;
         for (const t of targets) {
-            if (myGen !== NS.loopGeneration) return count;
+            if (myGen !== NS.loopGeneration || NS.state.paused) return count;
             if (!NS.rateCheck()) break;
             if (NS.state.processedLikes.includes(t.key)) continue;
             t.btn.scrollIntoView({ block: 'center', behavior: 'instant' });
@@ -1264,7 +1407,6 @@
         return count;
     };
 
-    /* ════════════════ المتابعة العامة ════════════════ */
     NS.doAutoFollow = async function (myGen) {
         if (Math.random() * 100 > NS.state.followRatio) return 0;
         if (!NS.dailyCheck('follows')) { NS.pushLog('limit', '⛔ حد المتابعة'); return 0; }
@@ -1272,10 +1414,12 @@
         NS.updateDebugInfo('follow', targets.length);
         let count = 0;
         for (const t of targets) {
-            if (myGen !== NS.loopGeneration) return count;
+            if (myGen !== NS.loopGeneration || NS.state.paused) return count;
             if (!NS.rateCheck()) break;
             if (NS.state.processedFollows.includes(t.handle)) continue;
-            if (NS.state.autoFollowBack && location.pathname.includes('/notifications')) continue;
+            if (NS.state.autoFollowBack && location.pathname.includes('/notifications')) {
+                if (NS.state.processedFollowBacks.includes(t.handle)) continue;
+            }
             t.btn.scrollIntoView({ block: 'center', behavior: 'instant' });
             if (!await NS.sleepGen(NS.rand(700, 1400), myGen)) return count;
             if (NS.state.dryRun) { NS.pushLog('dry', `متابعة: ${t.handle}`); continue; }
@@ -1297,14 +1441,13 @@
         return count;
     };
 
-    /* ════════════════ إعادة النشر ════════════════ */
     NS.doAutoRepost = async function (myGen) {
         if (!NS.state.autoRepost) return 0;
         if (!NS.dailyCheck('reposts')) { NS.pushLog('limit', '⛔ حد إعادة النشر'); return 0; }
         const targets = NS.collectAllRepostButtons();
         let count = 0;
         for (const t of targets.slice(0, 3)) {
-            if (myGen !== NS.loopGeneration) return count;
+            if (myGen !== NS.loopGeneration || NS.state.paused) return count;
             if (!NS.rateCheck()) break;
             if (NS.state.processedReposts.includes(t.key)) continue;
             if (NS.state.dryRun) { NS.pushLog('dry', `إعادة نشر`); continue; }
@@ -1331,6 +1474,7 @@
         const start = Date.now();
         while (Date.now() - start < maxWaitMs) {
             if (myGen !== NS.loopGeneration) return null;
+            if (NS.state.paused) return null;
             const confirm = Array.from(document.querySelectorAll('button, [role="button"], [role="menuitem"]'))
                 .find(b => {
                     if (NS.isInsidePanel(b)) return false;
@@ -1368,7 +1512,7 @@
         if (!buttonsData.length) return 0;
         let n = 0, skipped = 0, failed = 0;
         for (const item of buttonsData) {
-            if (myGen !== NS.loopGeneration) return n;
+            if (myGen !== NS.loopGeneration || NS.state.paused) return n;
             if (!NS.rateCheck()) break;
             const h = item.handle;
             if (followers.has(h)) { skipped++; continue; }
@@ -1380,7 +1524,7 @@
             NS.fire(item.btn);
             let confirm = null, waitMs = 0;
             while (waitMs < 5000 && !confirm) {
-                if (myGen !== NS.loopGeneration) return n;
+                if (myGen !== NS.loopGeneration || NS.state.paused) return n;
                 await NS.sleep(200);
                 waitMs += 200;
                 confirm = await NS.waitForConfirmModal(100, myGen);
@@ -1404,9 +1548,6 @@
         return n;
     };
 
-    /* ═══════════════════════════════════════════════════════════
-       ✅ v1.0.15: الرد على الإشعارات — مُحدد صحيح
-       ═══════════════════════════════════════════════════════════ */
     NS.doReplyToNotifications = async function (myGen) {
         if (!location.pathname.includes('/notifications')) return 0;
         if (!NS.dailyCheck('notifReplies')) return 0;
@@ -1416,7 +1557,7 @@
 
         let count = 0;
         for (const n of notifications) {
-            if (myGen !== NS.loopGeneration) return count;
+            if (myGen !== NS.loopGeneration || NS.state.paused) return count;
             if (!NS.rateCheck()) break;
 
             const txt = (n.innerText || '').slice(0, 500);
@@ -1428,7 +1569,19 @@
             if (NS.state.onlyArabic && !NS.isArabicText(txt)) continue;
             if (NS.containsBlacklisted(txt)) continue;
 
-            const replyBtn = n.querySelector('[data-testid="replyBtn"]');
+            let replyBtn = n.querySelector('[data-testid="replyBtn"], [data-testid="reply-button"], [data-testid="replyButton"]');
+            if (!replyBtn) {
+                replyBtn = Array.from(n.querySelectorAll('button, [role="button"]')).find(b => {
+                    if (NS.isInsidePanel(b)) return false;
+                    const aria = (b.getAttribute('aria-label') || '').toLowerCase().trim();
+                    const txtBtn = (b.innerText || '').trim().toLowerCase();
+                    const tid = (b.getAttribute('data-testid') || '').toLowerCase();
+                    return tid.includes('reply') ||
+                           aria === 'reply' || aria.startsWith('reply ') ||
+                           aria === 'رد' || aria.startsWith('رد ') ||
+                           txtBtn === 'reply' || txtBtn === 'رد';
+                });
+            }
             if (!replyBtn) continue;
 
             if (NS.state.dryRun) {
@@ -1497,14 +1650,16 @@
         return count;
     };
 
-    /* ═══════════════════════════════════════════════════════════
-       ✅ v1.0.14: الرد على الرسائل — مُحدد صحيح
-       ═══════════════════════════════════════════════════════════ */
     NS.goBackToMessagesList = async function (myGen) {
-        if (location.pathname === '/messages' || location.pathname.endsWith('/messages')) return;
+        if (location.pathname === '/messages' || location.pathname.endsWith('/messages/')) return;
         const backBtn = document.querySelector('a[href="/messages"]')
-                     || document.querySelector('button[aria-label*="Back"]')
-                     || document.querySelector('button[aria-label*="رجوع"]');
+                     || Array.from(document.querySelectorAll('button, [role="button"], a'))
+                          .find(b => {
+                              if (NS.isInsidePanel(b)) return false;
+                              const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                              return aria.includes('back') || aria.includes('رجوع') ||
+                                     aria === 'العودة' || aria.includes('return');
+                          });
         if (backBtn) { NS.fire(backBtn); await NS.sleepGen(NS.rand(1500, 2000), myGen); }
         else { history.back(); await NS.sleepGen(2000, myGen); }
     };
@@ -1512,27 +1667,26 @@
     NS.doReplyToMessages = async function (myGen) {
         if (!location.pathname.includes('/messages')) return 0;
         if (location.pathname.includes('/messages/') && location.pathname !== '/messages' && location.pathname !== '/messages/') {
-            // داخل محادثة معيّنة — ارجع للقائمة أولاً
             await NS.goBackToMessagesList(myGen);
             return 0;
         }
         if (!NS.dailyCheck('messages')) return 0;
 
-        const convos = Array.from(document.querySelectorAll('a[href^="/messages/"][role="link"]'))
+        const convos = Array.from(document.querySelectorAll('a[href^="/messages/"]'))
             .filter(a => {
                 const href = a.getAttribute('href') || '';
-                if (href === '/messages' || href === '/messages/inbox') return false;
+                if (href === '/messages' || href === '/messages/' || href === '/messages/inbox') return false;
+                if (!/^\/messages\/[^/]+/.test(href)) return false;
                 const name = a.getAttribute('aria-label') || '';
                 if (!name) return false;
-                const hasAvatar = !!a.querySelector('[data-testid="userAvatarImage"]');
-                return hasAvatar || /^\/messages\/[a-z0-9]+/i.test(href);
+                return true;
             });
 
         if (!convos.length) { NS.pushLog('message-info', 'ℹ️ لا توجد محادثات'); return 0; }
 
         let count = 0;
         for (const c of convos) {
-            if (myGen !== NS.loopGeneration) return count;
+            if (myGen !== NS.loopGeneration || NS.state.paused) return count;
             if (!NS.rateCheck()) break;
 
             const href = c.getAttribute('href') || '';
@@ -1620,7 +1774,6 @@
         return count;
     };
 
-    /* ════════════════ الرد العام ════════════════ */
     NS.doAutoReply = async function (myGen) {
         if (!NS.state.autoReply) return 0;
         if (!NS.rateCheck()) return 0;
@@ -1630,11 +1783,20 @@
         if (!btns.length) { NS.pushLog('reply-info', 'ℹ️ لا توجد أزرار رد'); return 0; }
 
         const btn = btns[NS.rand(0, btns.length - 1)];
+
         const c = btn.closest('[data-testid^="feedItem-by-"]')
-               || btn.closest('[role="link"][data-testid]')
+               || btn.closest('[data-testid*="post"]')
                || btn.closest('[role="article"]')
-               || btn.closest('div[role="link"]')
-               || btn.closest('div');
+               || btn.closest('[role="link"]')
+               || btn.closest('article')
+               || (function () {
+                      let p = btn;
+                      for (let i = 0; i < 12 && p; i++) {
+                          if (p.querySelector && p.querySelector('a[href*="/post/"]')) return p;
+                          p = p.parentElement;
+                      }
+                      return null;
+                  })();
 
         if (c) {
             const postTextCheck = (c.innerText || '').slice(0, 800);
@@ -1660,7 +1822,7 @@
         if (NS.state.dryRun) { NS.pushLog('dry', `رد: "${selected.slice(0, 40)}"`); return 0; }
 
         for (let attempt = 1; attempt <= 2; attempt++) {
-            if (myGen !== NS.loopGeneration) return 0;
+            if (myGen !== NS.loopGeneration || NS.state.paused) return 0;
             try {
                 btn.scrollIntoView({ block: 'center', behavior: 'instant' });
                 if (!await NS.sleepGen(NS.rand(500, 900), myGen)) return 0;
@@ -1706,43 +1868,66 @@
         return 0;
     };
 
-    /* ════════════════ متابعة المتفاعلين ════════════════ */
     NS.doFollowEngagers = async function (myGen) {
         if (!NS.state.followEngagers || !NS.dailyCheck('engagerFollows')) return 0;
-        if (NS.state.engagerQueue.length === 0) return 0;
-        const handle = NS.state.engagerQueue.shift();
-        NS.saveSettings();
-        try {
-            const url = `/profile/${handle}`;
-            if (location.pathname !== url) {
-                NS.state.engagerQueue.push(handle);
-                if (!NS.state.engagerAttempts) NS.state.engagerAttempts = {};
-                NS.state.engagerAttempts[handle] = (NS.state.engagerAttempts[handle] || 0) + 1;
-                if (NS.state.engagerAttempts[handle] > 3) {
-                    delete NS.state.engagerAttempts[handle];
-                    NS.pushLog('engager-skip', `⏭️ ${handle}`);
-                }
+        if (!NS.state.engagerQueue || NS.state.engagerQueue.length === 0) return 0;
+
+        const handle = NS.state.engagerQueue[0];
+        const targetPath = `/profile/${handle}`;
+
+        if (location.pathname !== targetPath) {
+            if (!NS.state.engagerAttempts) NS.state.engagerAttempts = {};
+            NS.state.engagerAttempts[handle] = (NS.state.engagerAttempts[handle] || 0) + 1;
+            if (NS.state.engagerAttempts[handle] > 3) {
+                delete NS.state.engagerAttempts[handle];
+                NS.state.engagerQueue.shift();
+                NS.pushLog('engager-skip', `⏭️ فشل مرات: ${handle}`);
                 NS.saveSettings();
                 return 0;
             }
-            if (NS.state.engagerAttempts && NS.state.engagerAttempts[handle]) delete NS.state.engagerAttempts[handle];
-            const followBtn = NS.collectAllFollowButtons().find(b => b.handle === handle);
-            if (!followBtn) return 0;
-            if (NS.state.dryRun) { NS.pushLog('dry', `متابعة متفاعل: ${handle}`); return 0; }
-            NS.rateRecord();
-            NS.fire(followBtn.btn);
-            if (!await NS.sleepGen(2000, myGen)) return 0;
-            if (NS.isAlreadyFollowing(followBtn.btn)) {
-                NS.bumpStat('engagerFollows');
-                NS.dailyIncrement('engagerFollows');
-                NS.pushLog('engager', `✅ ${handle}`);
-                return 1;
-            }
-        } catch (e) {}
+            NS.saveSettings();
+
+            if (myGen !== NS.loopGeneration || NS.state.paused) return 0;
+            await NS.sleepGen(1500, myGen);
+            if (myGen !== NS.loopGeneration || NS.state.paused) return 0;
+
+            NS.pushLog('engager-nav', `🧭 → ${targetPath}`);
+            NS.forceSaveSettings();
+            location.href = 'https://bsky.app' + targetPath;
+            return 0;
+        }
+
+        if (NS.state.engagerAttempts && NS.state.engagerAttempts[handle]) {
+            delete NS.state.engagerAttempts[handle];
+        }
+        NS.state.engagerQueue.shift();
+        NS.saveSettings();
+
+        const target = NS.collectAllFollowButtons().find(b => b.handle === handle);
+        if (!target) {
+            NS.pushLog('engager-skip', `⏭️ لا يوجد زر: ${handle}`);
+            return 0;
+        }
+
+        if (NS.state.dryRun) {
+            NS.pushLog('dry', `متابعة متفاعل: ${handle}`);
+            return 0;
+        }
+
+        NS.rateRecord();
+        NS.fire(target.btn);
+        if (!await NS.sleepGen(2500, myGen)) return 0;
+
+        if (NS.isAlreadyFollowing(target.btn)) {
+            NS.bumpStat('engagerFollows');
+            NS.dailyIncrement('engagerFollows');
+            NS.pushLog('engager', `✅ ${handle}`);
+            return 1;
+        }
+        NS.pushLog('engager-fail', `❌ ${handle}`);
         return 0;
     };
 
-    /* ✅ جمع المتفاعلين — مُحدد صحيح */
     NS.collectEngagers = function () {
         if (!NS.state.followEngagers) return;
         if (!location.pathname.includes('/notifications')) return;
@@ -1829,7 +2014,7 @@
 
     NS.findScrollContainer = function () {
         const now = Date.now();
-        if (NS.scrollCache.el && now - NS.scrollCache.ts < 5000 &&
+        if (NS.scrollCache.el && now - NS.scrollCache.ts < 10000 &&
             NS.scrollCache.path === location.pathname &&
             document.contains(NS.scrollCache.el) &&
             NS.scrollCache.el.scrollHeight > NS.scrollCache.el.clientHeight + 100) {
@@ -1879,6 +2064,39 @@
         }
     };
 
+    NS.updateToggleButton = function () {
+        const btn = document.getElementById('b11-toggle');
+        if (!btn) return;
+        if (NS.state.paused) {
+            btn.innerText = '▶️ تشغيل البوت';
+            btn.className = 'b11-btn green';
+        } else {
+            btn.innerText = '⏸️ إيقاف البوت';
+            btn.className = 'b11-btn red';
+        }
+    };
+
+    NS.startBot = function () {
+        NS.state.paused = false;
+        NS.forceSaveSettings();
+        NS.updateToggleButton();
+        NS.setFooter('⏳ جاري التشغيل...');
+        NS.pushLog('start', '▶️ تم تشغيل البوت يدوياً');
+        setTimeout(() => { NS.botLoop(); }, 500);
+    };
+
+    NS.stopBot = function () {
+        NS.state.paused = true;
+        NS.forceSaveSettings();
+        NS.loopGeneration++;
+        NS.activeLoopId = null;
+        NS.cyclesWithoutAction = 0;
+        NS.updateToggleButton();
+        NS.setFooter('⏸️ البوت موقوف — Shift+B');
+        NS.notify('البوت موقوف', 'اضغط الزر مرة أخرى للتشغيل');
+        NS.pushLog('stop', '⏸️ تم إيقاف البوت يدوياً');
+    };
+
     NS.botLoop = async function () {
         const myGen = ++NS.loopGeneration;
         NS.activeLoopId = myGen;
@@ -1887,18 +2105,24 @@
             NS.autoDetectMyHandle();
             NS.handleDetectionAttempts++;
         }
+        NS.pushLog('startup', `🚀 فحص الصفحة: ${location.pathname}`);
         console.log(`▶️ جيل ${myGen}`);
         await NS.waitForContent(myGen, 15000);
 
         while (NS.activeLoopId === myGen && myGen === NS.loopGeneration) {
             let actionCount = 0;
             try {
-                if (NS.state.scheduleEnabled && !NS.isWithinSchedule()) {
-                    NS.setFooter('⏰ خارج الجدولة');
-                    await NS.sleepGen(60000, myGen);
+                if (NS.state.paused) {
+                    NS.setFooter('⏸️ موقوف');
+                    if (!await NS.sleepGen(2000, myGen)) break;
                     continue;
                 }
-                if (!NS.state.paused) {
+                if (NS.state.scheduleEnabled && !NS.isWithinSchedule()) {
+                    NS.setFooter('⏰ خارج الجدولة');
+                    if (!await NS.sleepGen(60000, myGen)) break;
+                    continue;
+                }
+                {
                     NS.checkScheduledPosts();
                     NS.checkContentCalendar();
 
@@ -1909,32 +2133,41 @@
                     if (onF) NS.trackCurrentFollowers();
                     if (onN) NS.collectEngagers();
 
+                    if (NS.state.paused) continue;
                     if (NS.state.autoReplyMessages && onM) actionCount += await NS.doReplyToMessages(myGen);
-                    if (myGen !== NS.loopGeneration) break;
+                    if (myGen !== NS.loopGeneration || NS.state.paused) break;
+
                     if (NS.state.autoFollowBack && onN) actionCount += await NS.doFollowBack(myGen);
-                    if (myGen !== NS.loopGeneration) break;
+                    if (myGen !== NS.loopGeneration || NS.state.paused) break;
+
                     if (NS.state.autoReplyNotifications && onN) actionCount += await NS.doReplyToNotifications(myGen);
-                    if (myGen !== NS.loopGeneration) break;
+                    if (myGen !== NS.loopGeneration || NS.state.paused) break;
+
                     if (NS.state.autoLikeCommenters && (onN || /\/profile\//.test(location.pathname)))
                         actionCount += await NS.doLikeCommenters(myGen);
-                    if (myGen !== NS.loopGeneration) break;
+                    if (myGen !== NS.loopGeneration || NS.state.paused) break;
+
                     if (NS.state.autoLike) actionCount += await NS.doAutoLike(myGen);
-                    if (myGen !== NS.loopGeneration) break;
+                    if (myGen !== NS.loopGeneration || NS.state.paused) break;
+
                     if (NS.state.autoRepost) actionCount += await NS.doAutoRepost(myGen);
-                    if (myGen !== NS.loopGeneration) break;
-                    if (NS.state.autoFollow && !(onN && NS.state.autoFollowBack))
-                        actionCount += await NS.doAutoFollow(myGen);
-                    if (myGen !== NS.loopGeneration) break;
+                    if (myGen !== NS.loopGeneration || NS.state.paused) break;
+
+                    if (NS.state.autoFollow) actionCount += await NS.doAutoFollow(myGen);
+                    if (myGen !== NS.loopGeneration || NS.state.paused) break;
+
                     if (NS.state.autoUnfollow) actionCount += await NS.doCleanupNonFollowers(myGen);
-                    if (myGen !== NS.loopGeneration) break;
+                    if (myGen !== NS.loopGeneration || NS.state.paused) break;
+
                     if (NS.state.followEngagers) actionCount += await NS.doFollowEngagers(myGen);
-                    if (myGen !== NS.loopGeneration) break;
+                    if (myGen !== NS.loopGeneration || NS.state.paused) break;
+
                     if (NS.state.autoReply && !onN && !onM) actionCount += await NS.doAutoReply(myGen);
-                    if (myGen !== NS.loopGeneration) break;
+                    if (myGen !== NS.loopGeneration || NS.state.paused) break;
 
                     NS.maybeResetMemory();
                     await NS.maybeAutoNavigate(myGen);
-                    if (myGen !== NS.loopGeneration) break;
+                    if (myGen !== NS.loopGeneration || NS.state.paused) break;
 
                     if (actionCount === 0) {
                         NS.cyclesWithoutAction++;
@@ -1967,7 +2200,11 @@
                 NS.captureError(err, 'botLoop');
                 if (actionCount === 0) NS.cyclesWithoutAction++;
             }
-            NS.setFooter(NS.state.paused ? '⏸️ موقوف' : `⏱️ يعمل — ${actionCount} فعل`);
+            if (NS.state.paused) {
+                NS.setFooter('⏸️ موقوف');
+            } else {
+                NS.setFooter(`⏱️ يعمل — ${actionCount} فعل`);
+            }
             const wait = actionCount > 0 ? NS.state.fastCycleMs : NS.rand(4000, 7000);
             if (!await NS.sleepGen(wait, myGen)) break;
         }
@@ -2005,9 +2242,13 @@
         r.onload = e => {
             try {
                 const d = JSON.parse(e.target.result);
-                if (d.state) Object.assign(NS.state, d.state);
-                if (d.stats) { Object.assign(NS.stats, d.stats); NS.saveStats(); }
-                if (d.profiles) { NS.profiles = d.profiles; NS.saveProfiles(); }
+                // ✅ استخدام safeAssign
+                if (d.state) NS.safeAssign(NS.state, d.state);
+                if (d.stats) { NS.safeAssign(NS.stats, d.stats); NS.saveStats(); }
+                if (d.profiles && Array.isArray(d.profiles)) {
+                    NS.profiles = d.profiles.filter(p => p && typeof p === 'object');
+                    NS.saveProfiles();
+                }
                 NS.forceSaveSettings();
                 alert('✅ تم الاستيراد');
                 location.reload();
@@ -2024,14 +2265,15 @@
             name: name,
             handle: NS.state.myHandle,
             appPassword: NS.state.blueskyAppPassword,
-            did: NS.sessionCache.did || null,
+            did: null,
             settings: cleanSettings
         });
         NS.saveProfiles();
-        alert(`✅ حُفظ: ${name}\n📛 ${NS.state.myHandle}\n🔑 ${NS.state.blueskyAppPassword ? 'محفوظة' : '⚠️ فارغة'}`);
+        alert(`✅ حُفظ: ${name}\n📛 ${NS.state.myHandle}\n🔑 ${NS.hasAppPassword() ? 'محفوظة' : '⚠️ فارغة'}`);
     };
 
-    NS.addNewProfile = function (handle, appPassword, displayName) {
+    // ✅ أصبحت async لتشفير كلمة المرور بشكل غير متزامن
+    NS.addNewProfile = async function (handle, appPassword, displayName) {
         handle = String(handle || '').trim();
         appPassword = String(appPassword || '').trim();
         displayName = String(displayName || '').trim() || handle;
@@ -2043,13 +2285,15 @@
         });
         if (exists) { alert(`⚠️ الحساب موجود: ${handle}`); return false; }
 
-        const encPass = NS.state.encryptPasswords ? NS.encrypt(appPassword) : appPassword;
+        const encPass = NS.state.encryptPasswords !== false
+            ? await NS.encrypt(appPassword)
+            : appPassword;
         NS.profiles.push({
             name: displayName,
             handle: handle,
             appPassword: encPass,
             did: null,
-            settings: Object.assign({}, NS.defaultState, {
+            settings: NS.safeAssign({}, NS.defaultState, {
                 myHandle: handle,
                 blueskyAppPassword: encPass
             })
@@ -2070,11 +2314,12 @@
             current.appPassword = NS.state.blueskyAppPassword;
         }
         const p = NS.profiles[idx];
-        NS.state = Object.assign({}, NS.defaultState, p.settings || {});
+        // ✅ safeAssign
+        NS.state = NS.safeAssign({}, NS.defaultState, p.settings || {});
         if (p.handle) NS.state.myHandle = p.handle;
         if (p.appPassword) NS.state.blueskyAppPassword = p.appPassword;
-        NS.sessionCache = { accessJwt: null, refreshJwt: null, did: null, expiresAt: 0 };
-        NS.accountSessions = {};
+        // ✅ مسح جلسات الحساب القديم
+        NS.clearSessions();
         window.__bskyState = NS.state;
         ['unfollowedUsers','processedLikes','processedFollows','processedFollowBacks',
          'processedCommentLikes','processedNotifReplies','processedMessages','processedReposts',
@@ -2115,7 +2360,6 @@
         if (prevVal && Array.from(sel.options).some(o => o.value === prevVal)) sel.value = prevVal;
     };
 
-    /* ════════════════ اللوحة ════════════════ */
     NS.createDashboard = function () {
         if (document.getElementById(NS.PANEL_ID)) return;
         const s = NS.state;
@@ -2152,10 +2396,15 @@
         NS.bindDashboardEvents(panel, mini);
         NS.renderAll();
         NS.populatePostAccountSelect();
+        NS.updateToggleButton();
     };
 
     NS.buildDashboardHTML = function () {
-        const s = NS.state, esc = NS.esc, passValue = esc(NS.getDecryptedPass());
+        const s = NS.state, esc = NS.esc;
+        // ✅ لا نضع كلمة المرور أبداً في قيمة الحقل
+        const passPlaceholder = NS.hasAppPassword()
+            ? '✅ محفوظة — أدخل جديدة للتغيير'
+            : 'xxxx-xxxx-xxxx-xxxx';
         return `
         <div id="b11-header">
             <div class="b11-brand">
@@ -2192,14 +2441,7 @@
                 <span id="b11-dbg-break">☕0</span>
             </div>
             <div class="b11-last"><b>🎯 آخر نتيجة:</b> <span id="b11-last-result">—</span></div>
-            <div class="b11-btn-row">
-                <button id="b11-test" class="b11-btn blue">🧪 فحص</button>
-                <button id="b11-restart" class="b11-btn green">🔄 إعادة</button>
-            </div>
-            <div class="b11-btn-row">
-                <button id="b11-pause" class="b11-btn gray">⏸️ إيقاف</button>
-                <button id="b11-scroll" class="b11-btn purple">⬇️ تمرير</button>
-            </div>
+            <button id="b11-toggle" class="b11-btn ${s.paused ? 'green' : 'red'}">${s.paused ? '▶️ تشغيل البوت' : '⏸️ إيقاف البوت'}</button>
             <div class="b11-section">
                 <div class="b11-section-title" style="color:#f59e0b;">🔄 من الإشعارات</div>
                 <label><input type="checkbox" id="b11-fback" ${s.autoFollowBack?'checked':''}> رد المتابعة</label>
@@ -2240,9 +2482,9 @@
         <div class="b11-pane" data-p="schedule" style="display:none">
             <div class="b11-section">
                 <div class="b11-section-title" style="color:#3b82f6;">🔑 كلمة مرور التطبيق</div>
-                <input type="password" id="b11-app-pass" value="${passValue}" placeholder="xxxx-xxxx-xxxx-xxxx">
-                <div style="font-size:9px;color:#94a3b8;">${s.blueskyAppPassword ? '✅ محفوظة' : 'أدخلها مرة واحدة'}</div>
-                <label style="margin-top:6px;"><input type="checkbox" id="b11-encrypt" ${s.encryptPasswords?'checked':''}> 🔐 تشفير</label>
+                <input type="password" id="b11-app-pass" value="" placeholder="${passPlaceholder}" autocomplete="off">
+                <div style="font-size:9px;color:#94a3b8;">${NS.hasAppPassword() ? '✅ محفوظة — أدخل قيمة جديدة للتغيير' : 'أدخلها مرة واحدة'}</div>
+                <label style="margin-top:6px;"><input type="checkbox" id="b11-encrypt" ${s.encryptPasswords?'checked':''}> 🔐 تشفير AES-GCM</label>
                 <div class="b11-app-pass-hint">
                     ⚠️ من: <a href="${NS.APP_PASSWORD_URL}" target="_blank">${NS.APP_PASSWORD_URL}</a>
                 </div>
@@ -2454,6 +2696,7 @@
                 <div class="b11-section-title" style="color:#ef4444;">🐛 سجل الأخطاء</div>
                 <div id="b11-error-count" style="font-size:11px;text-align:center;"></div>
                 <button id="b11-report-error" class="b11-btn" style="background:linear-gradient(135deg,#ef4444,#dc2626);">📤 إرسال إلى GitHub</button>
+                <div style="font-size:9px;color:#94a3b8;text-align:center;margin:3px 0;">⚠️ راجع البيانات قبل النشر — لا نُرسل معرّف الحساب</div>
                 <div class="b11-btn-row">
                     <button id="b11-export-errors" class="b11-btn gray">⬇️ تصدير</button>
                     <button id="b11-clear-errors" class="b11-btn gray">🗑️ مسح</button>
@@ -2511,6 +2754,8 @@
             .b11-btn.blue{background:linear-gradient(135deg,#0085ff,#0066cc);}
             .b11-btn.gray{background:linear-gradient(135deg,#475569,#334155);}
             .b11-btn.purple{background:linear-gradient(135deg,#6366f1,#4f46e5);}
+            .b11-btn.red{background:linear-gradient(135deg,#ef4444,#dc2626);}
+            #b11-toggle{padding:12px;font-size:14px;font-weight:900;border-radius:8px;margin:8px 0;letter-spacing:0.5px;}
             .b11-btn-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:4px 0;}
             .b11-btn-row .b11-btn{margin:0;}
             .b11-status{display:flex;gap:8px;padding:8px;background:#0a121e;border:1px solid #1e293b;border-radius:8px;font-size:10px;margin-bottom:6px;justify-content:space-around;}
@@ -2603,15 +2848,19 @@
         bind('b11-ml','mlPreferences',true);
         bind('b11-track-unf','trackUnfollowers',true);
 
+        // ✅ حقل كلمة المرور — لا نستعيد القيمة، نحفظ الجديدة فقط
         const passEl = document.getElementById('b11-app-pass');
         if (passEl) {
-            const savePass = () => {
+            const savePass = async () => {
                 const v = passEl.value.trim();
-                if (v) {
-                    NS.setEncryptedPass(v);
+                if (!v) return;
+                try {
+                    await NS.setAppPassword(v);
+                    passEl.value = '';
+                    passEl.placeholder = '✅ محفوظة — أدخل جديدة للتغيير';
                     NS.notify('✅', 'كلمة المرور محفوظة');
-                    const hint = passEl.parentElement.querySelector('div[style*="font-size:9px"]');
-                    if (hint) hint.innerText = '✅ محفوظة';
+                } catch (e) {
+                    alert('فشل حفظ كلمة المرور: ' + e.message);
                 }
             };
             passEl.onchange = savePass;
@@ -2641,6 +2890,14 @@
         bn('b11-dl-reposts','dailyLimitReposts',0,10000);
         bn('b11-weather-lat','weatherLat',-90,90);
         bn('b11-weather-lon','weatherLon',-180,180);
+
+        const toggleBtn = document.getElementById('b11-toggle');
+        if (toggleBtn) {
+            toggleBtn.onclick = () => {
+                if (NS.state.paused) NS.startBot();
+                else NS.stopBot();
+            };
+        }
 
         document.getElementById('b11-add-post').onclick = () => {
             const text = document.getElementById('b11-post-text').value.trim();
@@ -2715,43 +2972,6 @@
         document.getElementById('b11-import-settings').onclick = () => document.getElementById('b11-import-file').click();
         document.getElementById('b11-import-file').onchange = e => {
             if (e.target.files[0]) NS.importSettings(e.target.files[0]);
-        };
-
-        document.getElementById('b11-restart').onclick = () => {
-            NS.setFooter('⏳ إعادة...');
-            NS.loopGeneration++;
-            setTimeout(() => { NS.botLoop(); NS.setFooter('✅'); }, 300);
-        };
-        document.getElementById('b11-pause').onclick = e => {
-            NS.state.paused = !NS.state.paused;
-            e.target.innerText = NS.state.paused ? '▶️ استئناف' : '⏸️ إيقاف';
-            e.target.className = NS.state.paused ? 'b11-btn green' : 'b11-btn gray';
-            NS.saveSettings();
-        };
-        document.getElementById('b11-scroll').onclick = () => NS.autoScrollDown(true, NS.loopGeneration);
-
-        document.getElementById('b11-test').onclick = () => {
-            const f = NS.collectAllFollowButtons();
-            const l = NS.collectAllLikeButtons();
-            const r = NS.collectAllRepostButtons();
-            const rb = NS.findReplyButtons();
-            const notifs = document.querySelectorAll('[data-testid^="feedItem-by-"]').length;
-            const convos = document.querySelectorAll('a[href^="/messages/"][role="link"]').length;
-            alert([
-                `📄 ${location.pathname}`,
-                `👤 اسمك: ${NS.state.myHandle || '؟'}`,
-                `🔑 كلمة المرور: ${NS.state.blueskyAppPassword ? 'محفوظة ✅' : '⚠️'}`,
-                `👥 متابعة: ${f.length} | ❤️ إعجاب: ${l.length}`,
-                `🔁 إعادة: ${r.length} | 💬 ردود: ${rb.length}`,
-                `📬 إشعارات: ${notifs}`,
-                `💌 محادثات: ${convos}`,
-                `🌐 لغة: ${NS.state.languageFilter || 'بدون قيد'}`,
-                `🇸🇦 عربي فقط: ${NS.state.onlyArabic ? 'نعم' : 'لا'}`,
-                `🏷️ هاشتاجات: ${NS.state.autoHashtags ? 'مفعّلة' : 'معطّلة'}`,
-                `📎 مرفقات: ${NS.mediaBlobs.size}`,
-                `💼 حسابات: ${NS.profiles.length}`,
-                `🐛 أخطاء: ${NS.errorLog.length}`
-            ].join('\n'));
         };
 
         document.getElementById('b11-clear-mem').onclick = () => {
@@ -2937,6 +3157,9 @@
                 : l.type.includes('engager') ? '#10b981'
                 : l.type.includes('cleanup') ? '#f97316'
                 : l.type.includes('unfollower') ? '#ef4444'
+                : l.type.includes('startup') ? '#22c55e'
+                : l.type.includes('start') ? '#22c55e'
+                : l.type.includes('stop') ? '#ef4444'
                 : l.type.includes('reply') ? '#06b6d4'
                 : '#cbd5e1';
             return `<div style="color:${color}">${new Date(l.t).toLocaleTimeString()} • ${l.type} • ${NS.esc(l.detail)}</div>`;
@@ -2960,7 +3183,7 @@
                 if (NS.mediaBlobs.has(p.id)) {
                     mediaIcon = `<span title="✅ المرفق جاهز" style="cursor:help;">📎</span>`;
                 } else {
-                    mediaIcon = `<span class="b11-missing-media" title="⚠️ الملف فقد (المتصفح أُغلق) — أعد رفعه">⚠️</span>`;
+                    mediaIcon = `<span class="b11-missing-media" title="⚠️ الملف فقد — أعد رفعه">⚠️</span>`;
                 }
             }
             let accLabel = `👤 الحالي`;
@@ -3012,9 +3235,9 @@
         let html = `
             <div class="b11-new-profile-form">
                 <div class="b11-section-title">➕ إضافة حساب جديد</div>
-                <input type="text" id="b11-new-profile-handle" placeholder="اسم الحساب (username.bsky.social)" style="margin-bottom:4px;">
-                <input type="password" id="b11-new-profile-pass" placeholder="كلمة مرور التطبيق" style="margin-bottom:4px;">
-                <input type="text" id="b11-new-profile-name" placeholder="اسم مستعار (اختياري)" style="margin-bottom:4px;">
+                <input type="text" id="b11-new-profile-handle" placeholder="اسم الحساب (username.bsky.social)" style="margin-bottom:4px;" autocomplete="off">
+                <input type="password" id="b11-new-profile-pass" placeholder="كلمة مرور التطبيق" style="margin-bottom:4px;" autocomplete="new-password">
+                <input type="text" id="b11-new-profile-name" placeholder="اسم مستعار (اختياري)" style="margin-bottom:4px;" autocomplete="off">
                 <div class="b11-app-pass-hint">
                     ⚠️ من: <a href="${NS.APP_PASSWORD_URL}" target="_blank">${NS.APP_PASSWORD_URL}</a>
                 </div>
@@ -3041,11 +3264,11 @@
         el.querySelectorAll('[data-del]').forEach(b => b.onclick = () => NS.deleteProfile(+b.dataset.del));
         const addBtn = document.getElementById('b11-add-new-profile');
         if (addBtn) {
-            addBtn.onclick = () => {
+            addBtn.onclick = async () => {
                 const h = document.getElementById('b11-new-profile-handle');
                 const p = document.getElementById('b11-new-profile-pass');
                 const n = document.getElementById('b11-new-profile-name');
-                const ok = NS.addNewProfile(h.value, p.value, n.value);
+                const ok = await NS.addNewProfile(h.value, p.value, n.value);
                 if (ok) { h.value = ''; p.value = ''; n.value = ''; }
             };
         }
@@ -3122,9 +3345,25 @@
         return 0;
     };
 
+    // ✅ حساب SHA-256 للمحتوى المُنزَّل
+    async function sha256Hex(text) {
+        try {
+            const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+            return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+        } catch (e) { return ''; }
+    }
+
     NS.fetchLatestVersion = function () {
         return new Promise(resolve => {
             const url = UPDATE_URL + '?t=' + Date.now();
+            const handle = async text => {
+                try {
+                    const m = text.match(/@version\s+([\d.]+)/);
+                    if (!m) { resolve({ ok: false, error: 'لا يوجد إصدار' }); return; }
+                    const hash = await sha256Hex(text);
+                    resolve({ ok: true, version: m[1], hash, text });
+                } catch (e) { resolve({ ok: false, error: e.message }); }
+            };
             if (typeof GM_xmlhttpRequest === 'function') {
                 try {
                     GM_xmlhttpRequest({
@@ -3132,12 +3371,8 @@
                         headers: { 'Cache-Control': 'no-cache' },
                         timeout: 15000,
                         onload: res => {
-                            try {
-                                if (res.status !== 200) { resolve({ ok: false, error: 'HTTP ' + res.status }); return; }
-                                const m = (res.responseText || '').match(/@version\s+([\d.]+)/);
-                                if (!m) { resolve({ ok: false, error: 'لا يوجد إصدار' }); return; }
-                                resolve({ ok: true, version: m[1] });
-                            } catch (e) { resolve({ ok: false, error: e.message }); }
+                            if (res.status !== 200) { resolve({ ok: false, error: 'HTTP ' + res.status }); return; }
+                            handle(res.responseText || '');
                         },
                         onerror: () => resolve({ ok: false, error: 'فشل الاتصال' }),
                         ontimeout: () => resolve({ ok: false, error: 'انتهت المهلة' })
@@ -3146,11 +3381,7 @@
             } else {
                 fetch(url, { cache: 'no-cache' })
                     .then(r => r.text())
-                    .then(text => {
-                        const m = text.match(/@version\s+([\d.]+)/);
-                        if (!m) throw new Error('لا يوجد إصدار');
-                        resolve({ ok: true, version: m[1] });
-                    })
+                    .then(handle)
                     .catch(e => resolve({ ok: false, error: e.message }));
             }
         });
@@ -3172,8 +3403,16 @@
             NS.pushLog('update', `🆕 v${latest}`);
             NS.setFooter(`🆕 v${latest}`);
             NS.notify('🆕 تحديث', `v${latest}`);
-            const should = confirm(`🆕 تحديث متوفر!\n\nالحالي: v${current}\nالجديد: v${latest}\n\nتحديث الآن؟`);
-            if (should) NS.installUpdate();
+            // ✅ عرض SHA-256 للتحقق قبل التثبيت
+            const msg = `🆕 تحديث متوفر!\n\n` +
+                `الحالي: v${current}\n` +
+                `الجديد: v${latest}\n\n` +
+                `🔐 SHA-256 للملف الجديد:\n${result.hash || '—'}\n\n` +
+                `⚠️ تحقق من هذه التجزئة على GitHub قبل التثبيت.\n` +
+                `إن اختلفت → لا تُثبّت!\n\n` +
+                `تحديث الآن؟`;
+            const should = confirm(msg);
+            if (should) NS.installUpdate(result.text);
             return true;
         }
         if (cmp === 0 && !silent) {
@@ -3183,10 +3422,21 @@
         return false;
     };
 
-    NS.installUpdate = function () {
-        const url = UPDATE_URL + '?t=' + Date.now();
-        const win = window.open(url, '_blank');
-        if (!win || win.closed) setTimeout(() => { if (confirm('فتح صفحة التثبيت؟')) location.href = url; }, 300);
+    // ✅ حفظ الملف محلياً بدل redirect مباشر — المستخدم يراجعه
+    NS.installUpdate = function (text) {
+        try {
+            const blob = new Blob([text], { type: 'text/javascript' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'bsky-bot.user.js';
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
+            alert('✅ تم تنزيل الملف.\nراجعه ثم ثبّته من مدير السكربتات.');
+        } catch (e) {
+            // fallback
+            window.open(UPDATE_URL, '_blank');
+        }
     };
 
     NS.autoCheckUpdate = function () {
@@ -3232,9 +3482,14 @@
         const start = Date.now();
         while (Date.now() - start < timeoutMs) {
             if (myGen !== NS.loopGeneration) return false;
+            if (NS.state.paused) return false;
             const onM = location.pathname.includes('/messages');
             if (onM) {
-                if (document.querySelector('a[href^="/messages/"][role="link"]')) return true;
+                const first = document.querySelector('a[href^="/messages/"]');
+                if (first) {
+                    const h = first.getAttribute('href') || '';
+                    if (h && h !== '/messages' && h !== '/messages/' && h !== '/messages/inbox') return true;
+                }
             } else {
                 const l = NS.collectAllLikeButtons().length;
                 const f = NS.collectAllFollowButtons().length;
@@ -3248,6 +3503,7 @@
 
     NS.maybeAutoNavigate = async function (myGen) {
         if (!NS.state.navEnabled) return;
+        if (NS.state.paused) return;
         if (!NS.isWithinSchedule()) return;
         const stayMin = (Number(NS.state.navStayMin) || 3) * 60000;
         const stayMax = Math.max(stayMin, (Number(NS.state.navStayMax) || 6) * 60000);
@@ -3263,7 +3519,7 @@
             const next = pages[(idx + i + pages.length) % pages.length];
             if (next === cur) continue;
             if (!NS.pageHasWork(next)) continue;
-            if (myGen !== NS.loopGeneration) return;
+            if (myGen !== NS.loopGeneration || NS.state.paused) return;
             NS.pushLog('nav', '🧭 → ' + next);
             NS.setFooter('🧭 → ' + next);
             NS.forceSaveSettings();
@@ -3288,8 +3544,10 @@
         'doCleanupNonFollowers', 'doFollowBack', 'doAutoLike', 'doAutoFollow',
         'doAutoReply', 'findReplyButtons', 'findComposer', 'findComposerSend',
         'setInputValue', 'waitForComposer', 'appendHashtags', 'generateHashtags',
-        'getSessionFor', 'refreshSessionFor', 'populatePostAccountSelect',
-        'addNewProfile', 'doReplyToNotifications', 'doReplyToMessages', 'collectEngagers'
+        'populatePostAccountSelect', 'addNewProfile', 'doReplyToNotifications',
+        'doReplyToMessages', 'collectEngagers', 'startBot', 'stopBot',
+        'updateToggleButton', 'getCurrentSession', 'getProfileSession',
+        'setAppPassword', 'hasAppPassword', 'safeAssign'
     ];
     const missing = requiredFunctions.filter(fn => typeof NS[fn] !== 'function');
     if (missing.length) { console.error('❌ دوال مفقودة:', missing.join(', ')); return; }
@@ -3304,7 +3562,7 @@
             if (root && root.children.length > 0 && !splash) {
                 const hasContent = document.querySelector('main') &&
                     (document.querySelectorAll('button, [role="button"]').length > 5 ||
-                     document.querySelectorAll('[data-testid^="feedItem-by-"]').length > 0 ||
+                     document.querySelectorAll('[data-testid^="feed-item"]').length > 0 ||
                      document.querySelectorAll('a[href^="/messages/"]').length > 0);
                 if (hasContent) {
                     await NS.sleep(1500);
@@ -3321,7 +3579,12 @@
         try {
             await NS.waitForReactApp(60000);
             NS.createDashboard();
-            NS.botLoop();
+            if (NS.state.paused) {
+                NS.setFooter('⏸️ البوت موقوف — اضغط "تشغيل"');
+                console.log('⏸️ البوت موقوف (محفوظ سابقاً)');
+            } else {
+                NS.botLoop();
+            }
             NS.autoCheckUpdate();
             NS.checkUpdateOnInstall();
             console.log(`🚀 بوت بلو سكاي v${NS.version} يعمل`);
@@ -3333,6 +3596,6 @@
     })();
 
     window.addEventListener('beforeunload', () => {
-        try { NS.loopGeneration++; NS.stopKeepAlive(); } catch (e) {}
+        try { NS.loopGeneration++; NS.stopKeepAlive(); NS.clearSessions(); } catch (e) {}
     });
 })();
