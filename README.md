@@ -1,4 +1,3 @@
-```markdown
 <div align="center">
 
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0085ff&height=220&section=header&text=Bluesky%20Bot%20Manager&fontSize=50&fontColor=ffffff&animation=fadeIn&fontAlignY=35&desc=v1.0.20%20PRO%20%E2%80%94%20%D8%A8%D9%88%D8%AA%20%D8%A5%D8%AF%D8%A7%D8%B1%D8%A9%20%D8%A8%D9%84%D9%88%20%D8%B3%D9%83%D8%A7%D9%8A&descAlignY=60&descSize=20" width="100%" />
@@ -756,4 +755,3 @@ MIT License
 <sub>v1.0.20 PRO — Hardened Security + Reliability Release</sub>
 
 </div>
-```
